@@ -281,4 +281,172 @@ describe('gitea backend implementation', () => {
       });
     });
   });
+
+  describe('editorial workflow', () => {
+    it('should list unpublished entries', async () => {
+      const giteaImplementation = new GiteaImplementation(config);
+      giteaImplementation.api = {
+        listUnpublishedBranches: jest.fn().mockResolvedValue(['cms/branch1', 'cms/branch2']),
+      };
+
+      await expect(giteaImplementation.unpublishedEntries()).resolves.toEqual([
+        'branch1',
+        'branch2',
+      ]);
+    });
+
+    it('should get unpublished entry', async () => {
+      const giteaImplementation = new GiteaImplementation(config);
+      giteaImplementation.api = {
+        generateContentKey: jest.fn().mockReturnValue('collection/slug'),
+        retrieveUnpublishedEntryData: jest
+          .fn()
+          .mockResolvedValue({ slug: 'slug', status: 'draft' }),
+      };
+
+      await expect(
+        giteaImplementation.unpublishedEntry({ collection: 'collection', slug: 'slug' }),
+      ).resolves.toEqual({
+        slug: 'slug',
+        status: 'draft',
+      });
+      expect(giteaImplementation.api.retrieveUnpublishedEntryData).toHaveBeenCalledWith(
+        'collection/slug',
+      );
+    });
+
+    it('should get unpublished entry data file', async () => {
+      const giteaImplementation = new GiteaImplementation(config);
+      giteaImplementation.api = {
+        generateContentKey: jest.fn().mockReturnValue('collection/slug'),
+        readFile: jest.fn().mockResolvedValue('file-content'),
+      };
+
+      await expect(
+        giteaImplementation.unpublishedEntryDataFile(
+          'collection',
+          'slug',
+          'path/to/file',
+          'sha-123',
+        ),
+      ).resolves.toEqual('file-content');
+    });
+
+    it('should get unpublished entry media file', async () => {
+      const giteaImplementation = new GiteaImplementation(config);
+      const blob = new Blob(['content']);
+      giteaImplementation.api = {
+        generateContentKey: jest.fn().mockReturnValue('collection/slug'),
+        readFile: jest.fn().mockResolvedValue(blob),
+      };
+
+      const result = await giteaImplementation.unpublishedEntryMediaFile(
+        'collection',
+        'slug',
+        'path/to/image.png',
+        'sha-456',
+      );
+
+      expect(result.name).toBe('image.png');
+      expect(result.file).toEqual(expect.any(File));
+    });
+  });
+
+  describe('open authoring', () => {
+    describe('authenticateWithFork', () => {
+      it('should use origin repo if user is maintainer', async () => {
+        const giteaImplementation = new GiteaImplementation(
+          {
+            ...config,
+            backend: { ...config.backend, open_authoring: true },
+          },
+          { useWorkflow: true },
+        );
+
+        giteaImplementation.userIsOriginMaintainer = jest.fn().mockResolvedValue(true);
+        giteaImplementation.currentUser = jest.fn().mockResolvedValue({ login: 'user' });
+        giteaImplementation.api = {
+          forkExists: jest.fn(),
+          mergeUpstream: jest.fn(),
+          createFork: jest.fn(),
+        };
+
+        await giteaImplementation.authenticateWithFork({
+          userData: { token: 'token' },
+          getPermissionToFork: jest.fn(),
+        });
+
+        expect(giteaImplementation.repo).toBe('owner/repo');
+        expect(giteaImplementation.useOpenAuthoring).toBe(false);
+      });
+
+      it('should create fork if user is contributor', async () => {
+        const mockForkExists = jest.fn().mockResolvedValue(false);
+        const mockCreateFork = jest.fn().mockResolvedValue({ full_name: 'contributor/repo' });
+        const mockMergeUpstream = jest.fn();
+
+        const giteaImplementation = new GiteaImplementation(
+          {
+            ...config,
+            backend: { ...config.backend, open_authoring: true },
+          },
+          {
+            useWorkflow: true,
+            API: {
+              forkExists: mockForkExists,
+              createFork: mockCreateFork,
+              mergeUpstream: mockMergeUpstream,
+            },
+          },
+        );
+
+        giteaImplementation.userIsOriginMaintainer = jest.fn().mockResolvedValue(false);
+        giteaImplementation.currentUser = jest.fn().mockResolvedValue({ login: 'contributor' });
+        giteaImplementation.pollUntilForkExists = jest.fn().mockResolvedValue(undefined);
+
+        await giteaImplementation.authenticateWithFork({
+          userData: { token: 'token' },
+          getPermissionToFork: jest.fn().mockResolvedValue(),
+        });
+
+        expect(giteaImplementation.repo).toBe('contributor/repo');
+        expect(giteaImplementation.useOpenAuthoring).toBe(true);
+        expect(mockCreateFork).toHaveBeenCalled();
+      });
+
+      it('should sync existing fork if one exists', async () => {
+        const mockForkExists = jest.fn().mockResolvedValue(true);
+        const mockMergeUpstream = jest.fn().mockResolvedValue(undefined);
+        const mockCreateFork = jest.fn();
+
+        const giteaImplementation = new GiteaImplementation(
+          {
+            ...config,
+            backend: { ...config.backend, open_authoring: true },
+          },
+          {
+            useWorkflow: true,
+            API: {
+              forkExists: mockForkExists,
+              mergeUpstream: mockMergeUpstream,
+              createFork: mockCreateFork,
+            },
+          },
+        );
+
+        giteaImplementation.userIsOriginMaintainer = jest.fn().mockResolvedValue(false);
+        giteaImplementation.currentUser = jest.fn().mockResolvedValue({ login: 'contributor' });
+
+        await giteaImplementation.authenticateWithFork({
+          userData: { token: 'token' },
+          getPermissionToFork: jest.fn(),
+        });
+
+        expect(giteaImplementation.repo).toBe('contributor/repo');
+        expect(giteaImplementation.useOpenAuthoring).toBe(true);
+        expect(mockMergeUpstream).toHaveBeenCalled();
+        expect(mockCreateFork).not.toHaveBeenCalled();
+      });
+    });
+  });
 });
