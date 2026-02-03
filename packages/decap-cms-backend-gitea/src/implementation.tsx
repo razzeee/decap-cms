@@ -13,6 +13,7 @@ import {
   getBlobSHA,
   getMediaAsBlob,
   getMediaDisplayURL,
+  getPreviewStatus,
   runWithLock,
   unsentRequest,
 } from 'decap-cms-lib-util';
@@ -56,6 +57,7 @@ export default class Gitea implements Implementation {
   mediaFolder?: string;
   token: string | null;
   cmsLabelPrefix: string;
+  previewContext: string;
   _currentUserPromise?: Promise<GiteaUser>;
   _userIsOriginMaintainerPromises?: {
     [key: string]: Promise<boolean>;
@@ -88,6 +90,7 @@ export default class Gitea implements Implementation {
     this.token = '';
     this.mediaFolder = config.media_folder;
     this.cmsLabelPrefix = config.backend.cms_label_prefix || '';
+    this.previewContext = config.backend.preview_context || '';
     this.lock = asyncLock();
   }
 
@@ -446,8 +449,19 @@ export default class Gitea implements Implementation {
     return;
   }
 
-  async getDeployPreview() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return {} as any;
+  async getDeployPreview(collection: string, slug: string) {
+    try {
+      const statuses = await this.api!.getStatuses(collection, slug);
+      const deployStatus = getPreviewStatus(statuses, this.previewContext);
+
+      if (deployStatus) {
+        const { target_url: url, state } = deployStatus;
+        return { url, status: state };
+      } else {
+        return null;
+      }
+    } catch (e) {
+      return null;
+    }
   }
 }

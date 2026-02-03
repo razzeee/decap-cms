@@ -258,3 +258,123 @@ export type FilesResponse = {
   content: Array<ContentsResponse>;
   verification: PayloadCommitVerification;
 };
+
+export type GiteaLabel = {
+  id: number;
+  name: string;
+  color: string;
+  description: string;
+  url: string;
+};
+
+export type GiteaBranchCommit = {
+  id: string;
+  message: string;
+  url: string;
+  author: CommitUser;
+  committer: CommitUser;
+  timestamp: string;
+  added: string[] | null;
+  removed: string[] | null;
+  modified: string[] | null;
+};
+
+export type GiteaBranch = {
+  name: string;
+  commit: GiteaBranchCommit;
+  protected: boolean;
+  required_approvals: number;
+  enable_status_check: boolean;
+  status_check_contexts: string[];
+  user_can_push: boolean;
+  user_can_merge: boolean;
+  effective_branch_protection_name: string;
+};
+
+export type GiteaPullRequestHead = {
+  label: string;
+  ref: string;
+  sha: string;
+  repo_id: number;
+  repo: GiteaRepository;
+};
+
+export type GiteaPullRequest = {
+  id: number;
+  url: string;
+  number: number;
+  user: GiteaUser;
+  title: string;
+  body: string;
+  labels: GiteaLabel[];
+  milestone: null;
+  assignee: GiteaUser | null;
+  assignees: GiteaUser[] | null;
+  state: string;
+  is_locked: boolean;
+  comments: number;
+  html_url: string;
+  diff_url: string;
+  patch_url: string;
+  mergeable: boolean;
+  merged: boolean;
+  merged_at: string | null;
+  merge_commit_sha: string | null;
+  merged_by: GiteaUser | null;
+  base: GiteaPullRequestHead;
+  head: GiteaPullRequestHead;
+  merge_base: string;
+  due_date: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+};
+
+export type GiteaChangedFile = {
+  filename: string;
+  previous_filename?: string;
+  status: 'added' | 'removed' | 'modified' | 'renamed';
+  additions: number;
+  deletions: number;
+  changes: number;
+  html_url: string;
+  contents_url: string;
+  raw_url: string;
+};
+
+export type GiteaCompareCommit = {
+  sha: string;
+  url: string;
+  html_url: string;
+  commit: ReposListCommitsResponseItemCommit;
+  author: GiteaUser;
+  committer: GiteaUser;
+  parents: Array<CommitMeta>;
+};
+
+export type GiteaCompareResponse = {
+  commits: GiteaCompareCommit[];
+  total_commits: number;
+};
+
+export type GiteaCommitStatus = {
+  id: number;
+  status: 'pending' | 'success' | 'error' | 'failure' | 'warning';
+  context: string;
+  description: string;
+  target_url: string;
+  url: string;
+  created_at: string;
+  updated_at: string;
+  creator: GiteaUser;
+};
+
+export type GiteaCombinedStatus = {
+  state: string;
+  sha: string;
+  total_count: number;
+  statuses: GiteaCommitStatus[];
+  repository: GiteaRepository;
+  commit_url: string;
+  url: string;
+};

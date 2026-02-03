@@ -22,6 +22,7 @@ import {
   statusToLabel,
   DEFAULT_PR_BODY,
   MERGE_COMMIT_MESSAGE,
+  PreviewState,
 } from 'decap-cms-lib-util';
 
 import type {
@@ -43,9 +44,19 @@ import type {
   GiteaBranch,
   GiteaLabel,
   GiteaChangedFile,
+  GiteaCompareResponse,
+  GiteaCompareCommit,
+  GiteaCombinedStatus,
 } from './types';
 
 export const API_NAME = 'Gitea';
+
+type TreeEntry = {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string | null;
+};
 
 export interface Config {
   apiRoot?: string;
@@ -555,17 +566,98 @@ export default class API {
   }
 
   async closePR(number: number): Promise<GiteaPullRequest> {
+    console.log('%c Closing PR', 'line-height: 30px;text-align: center;font-weight: bold');
     return this.updatePR(number, 'closed');
   }
 
+  async openPR(number: number): Promise<GiteaPullRequest> {
+    console.log('%c Re-opening PR', 'line-height: 30px;text-align: center;font-weight: bold');
+    return this.updatePR(number, 'open');
+  }
+
   async mergePR(pullRequest: GiteaPullRequest): Promise<void> {
-    await this.request(`${this.originRepoURL}/pulls/${pullRequest.number}/merge`, {
-      method: 'POST',
-      body: JSON.stringify({
-        do: 'merge',
-        merge_message_field: MERGE_COMMIT_MESSAGE,
-      }),
+    try {
+      await this.request(`${this.originRepoURL}/pulls/${pullRequest.number}/merge`, {
+        method: 'POST',
+        body: JSON.stringify({
+          do: 'merge',
+          merge_message_field: MERGE_COMMIT_MESSAGE,
+        }),
+      });
+    } catch (error) {
+      // Gitea returns 405 when merge is not possible (conflicts, etc.)
+      // or 409 for conflict errors
+      if (error instanceof APIError && (error.status === 405 || error.status === 409)) {
+        return this.forceMergePR(pullRequest);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Force merge a PR by recreating its changes on top of the base branch.
+   * Used when normal merge fails due to conflicts.
+   */
+  async forceMergePR(pullRequest: GiteaPullRequest): Promise<void> {
+    console.log(
+      '%c Automatic merge not possible - Forcing merge.',
+      'line-height: 30px;text-align: center;font-weight: bold',
+    );
+
+    // Get the files changed in this PR
+    const files = await this.getPullRequestFiles(pullRequest.number);
+
+    // Build a commit message listing all files
+    let commitMessage = 'Automatically generated. Merged on Decap CMS\n\nForce merge of:';
+    for (const file of files) {
+      commitMessage += `\n* "${file.filename}"`;
+    }
+
+    // Get the current default branch
+    const defaultBranch = await this.getDefaultBranch();
+    const baseSha = defaultBranch.commit.id;
+
+    // For each file in the PR, get its content from the PR head and apply to base
+    const treeUpdates: { path: string; sha: string | null }[] = [];
+
+    for (const file of files) {
+      if (file.status === 'removed') {
+        // File was deleted
+        treeUpdates.push({ path: file.filename, sha: null });
+      } else {
+        // File was added or modified - get its SHA from the PR head
+        try {
+          const sha = await this.getFileSha(file.filename, {
+            branch: pullRequest.head.sha,
+            repoURL: this.repoURL,
+          });
+          treeUpdates.push({ path: file.filename, sha });
+        } catch (e) {
+          console.warn(`Could not get SHA for file ${file.filename} during force merge`, e);
+        }
+      }
+
+      // Handle renamed files - delete the old path
+      if (file.status === 'renamed' && file.previous_filename) {
+        treeUpdates.push({ path: file.previous_filename, sha: null });
+      }
+    }
+
+    // Create a new tree with the changes applied to the base
+    const changeTree = await this.updateTree(baseSha, treeUpdates);
+
+    // Create a commit
+    const commit = await this.commit(commitMessage, changeTree);
+
+    // Update the default branch to point to the new commit
+    // Note: This requires direct branch update since we're bypassing the PR merge
+    await this.request(`${this.repoURL}/git/refs/heads/${encodeURIComponent(this.branch)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ sha: commit.sha }),
     });
+
+    // Close the PR since we've manually merged it
+    await this.closePR(pullRequest.number);
   }
 
   async getPullRequestFiles(number: number): Promise<GiteaChangedFile[]> {
@@ -623,6 +715,31 @@ export default class API {
     return cmsBranches;
   }
 
+  /**
+   * Retrieve commit statuses for a given collection/slug.
+   * Used for deploy preview links.
+   */
+  async getStatuses(
+    collectionName: string,
+    slug: string,
+  ): Promise<{ context: string; target_url: string; state: PreviewState }[]> {
+    const contentKey = this.generateContentKey(collectionName, slug);
+    const branch = branchFromContentKey(contentKey);
+    const pullRequest = await this.getBranchPullRequest(branch);
+    const sha = pullRequest.head.sha;
+
+    // Gitea uses /repos/{owner}/{repo}/commits/{sha}/status for combined status
+    const resp: GiteaCombinedStatus = await this.request(
+      `${this.originRepoURL}/commits/${sha}/status`,
+    );
+
+    return (resp.statuses || []).map(s => ({
+      context: s.context,
+      target_url: s.target_url || '',
+      state: s.status === 'success' ? PreviewState.Success : PreviewState.Other,
+    }));
+  }
+
   async retrieveUnpublishedEntryData(contentKey: string) {
     const branch = branchFromContentKey(contentKey);
     const pullRequest = await this.getBranchPullRequest(branch);
@@ -651,7 +768,27 @@ export default class API {
     const contentKey = this.generateContentKey(collection, slug);
     const branch = branchFromContentKey(contentKey);
     const pullRequest = await this.getBranchPullRequest(branch);
-    await this.setPullRequestStatus(pullRequest, newStatus);
+
+    // Get current PR state
+    const currentState = pullRequest.state;
+
+    // Handle status transitions that require PR state changes
+    if (currentState === 'open' && newStatus === 'draft') {
+      // When moving to draft, close the PR (makes it less visible)
+      await this.closePR(pullRequest.number);
+      // Fetch updated PR to set status on
+      const updatedPR = await this.getBranchPullRequest(branch);
+      await this.setPullRequestStatus(updatedPR, newStatus);
+    } else if (currentState === 'closed' && newStatus === 'pending_review') {
+      // When moving to pending_review from a closed PR, reopen it
+      await this.openPR(pullRequest.number);
+      // Fetch updated PR to set status on
+      const updatedPR = await this.getBranchPullRequest(branch);
+      await this.setPullRequestStatus(updatedPR, newStatus);
+    } else {
+      // For other transitions, just update the status label
+      await this.setPullRequestStatus(pullRequest, newStatus);
+    }
   }
 
   async deleteUnpublishedEntry(collection: string, slug: string) {
@@ -685,30 +822,74 @@ export default class API {
   ) {
     const contentKey = this.generateContentKey(collection, slug);
     const branch = branchFromContentKey(contentKey);
+    const unpublished = options.unpublished || false;
 
-    let branchExists = false;
-    try {
-      await this.getBranch(branch);
-      branchExists = true;
-    } catch (e) {
-      // Branch doesn't exist
-    }
-
-    if (!branchExists) {
-      // Create the branch from the default branch
+    if (!unpublished) {
+      // New entry - create branch and PR
       await this.createBranch(branch, this.branch);
-    }
 
-    // Persist files to the branch
-    const operations = await this.getChangeFileOperationsForBranch(files, branch);
-    await this.changeFilesOnBranch(operations, options, branch);
+      // Persist files to the branch
+      const operations = await this.getChangeFileOperationsForBranch(files, branch);
+      await this.changeFilesOnBranch(operations, options, branch);
 
-    // Create PR if it doesn't exist
-    if (!branchExists) {
+      // Create PR
       const pr = await this.createPR(options.commitMessage, branch);
       // Set initial status
       const status = options.status || 'draft';
       await this.setPullRequestStatus(pr, status);
+    } else {
+      // Entry is already on editorial workflow - rebase and update
+      try {
+        // Get the differences to identify media files that should be removed
+        const { files: diffFiles } = await this.getDifferences(this.branch, branch);
+
+        // Identify media files that are no longer in the entry
+        const mediaFilesList = files.map(f => trimStart(f.path, '/'));
+        const mediaFilesToRemove: { path: string; sha: null }[] = [];
+
+        for (const diff of diffFiles) {
+          // Check if it's a binary/media file (no text content typically)
+          const isBinaryLike =
+            diff.filename.match(/\.(jpg|jpeg|png|gif|svg|webp|ico|pdf|mp3|mp4|webm|ogg)$/i) !==
+            null;
+          if (isBinaryLike && !mediaFilesList.includes(diff.filename)) {
+            mediaFilesToRemove.push({ path: diff.filename, sha: null });
+          }
+        }
+
+        // Rebase the branch before applying new changes
+        const rebasedHead = await this.rebaseBranch(branch);
+
+        // Upload blobs for the files
+        const uploadedFiles: { path: string; sha: string }[] = [];
+        for (const file of files) {
+          const uploaded = await this.uploadBlob(file as { raw?: string; toBase64?: () => Promise<string> });
+          uploadedFiles.push({
+            path: trimStart(file.newPath || file.path, '/'),
+            sha: uploaded.sha as string,
+          });
+        }
+
+        // Combine with media files to remove
+        const allFiles = [
+          ...mediaFilesToRemove,
+          ...uploadedFiles,
+        ];
+
+        // Create new tree with changes
+        const changeTree = await this.updateTree(rebasedHead.sha, allFiles);
+
+        // Create commit
+        const commit = await this.commit(options.commitMessage, changeTree);
+
+        // Force update the branch
+        await this.patchBranch(branch, commit.sha, { force: true });
+      } catch (error) {
+        console.error('Error in editorial workflow update with rebase:', error);
+        // Fallback to simple update without rebase
+        const operations = await this.getChangeFileOperationsForBranch(files, branch);
+        await this.changeFilesOnBranch(operations, options, branch);
+      }
     }
   }
 
@@ -762,5 +943,231 @@ export default class API {
         message: options.commitMessage,
       }),
     })) as FilesResponse;
+  }
+
+  /**
+   * Get differences between two refs using Gitea's compare API
+   */
+  async getDifferences(
+    baseBranch: string,
+    headBranch: string,
+  ): Promise<{ commits: GiteaCompareCommit[]; files: GiteaChangedFile[] }> {
+    // Gitea compare endpoint: GET /repos/{owner}/{repo}/compare/{basehead}
+    const result: GiteaCompareResponse & { files?: GiteaChangedFile[] } = await this.request(
+      `${this.originRepoURL}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(headBranch)}`,
+    );
+
+    // The Gitea compare API returns commits but may not include files in the same way as GitHub
+    // We may need to get files from each commit or from the PR files endpoint
+    return {
+      commits: result.commits || [],
+      files: result.files || [],
+    };
+  }
+
+  /**
+   * Upload a blob to the repository
+   */
+  async uploadBlob(item: { raw?: string; sha?: string; toBase64?: () => Promise<string> }) {
+    const contentBase64 = await result(
+      item,
+      'toBase64',
+      partial(this.toBase64, item.raw as string),
+    );
+    const response: { sha: string } = await this.request(`${this.repoURL}/git/blobs`, {
+      method: 'POST',
+      body: JSON.stringify({
+        content: contentBase64,
+        encoding: 'base64',
+      }),
+    });
+    item.sha = response.sha;
+    return item;
+  }
+
+  /**
+   * Create a new tree
+   */
+  async createTree(baseSha: string, tree: TreeEntry[]): Promise<{ sha: string }> {
+    const result: { sha: string } = await this.request(`${this.repoURL}/git/trees`, {
+      method: 'POST',
+      body: JSON.stringify({ base_tree: baseSha, tree }),
+    });
+    return result;
+  }
+
+  /**
+   * Update a tree with file changes
+   */
+  async updateTree(
+    baseSha: string,
+    files: { path: string; sha: string | null }[],
+  ): Promise<{ sha: string; parentSha: string }> {
+    const tree: TreeEntry[] = files.map(file => ({
+      path: trimStart(file.path, '/'),
+      mode: '100644',
+      type: 'blob',
+      sha: file.sha,
+    }));
+
+    const newTree = await this.createTree(baseSha, tree);
+    return { ...newTree, parentSha: baseSha };
+  }
+
+  /**
+   * Create a commit
+   */
+  async createCommit(
+    message: string,
+    treeSha: string,
+    parents: string[],
+    author?: { name: string; email: string; date?: string },
+    committer?: { name: string; email: string; date?: string },
+  ): Promise<{ sha: string }> {
+    const result: { sha: string } = await this.request(`${this.repoURL}/git/commits`, {
+      method: 'POST',
+      body: JSON.stringify({ message, tree: treeSha, parents, author, committer }),
+    });
+    return result;
+  }
+
+  /**
+   * Helper commit method that wraps createCommit
+   */
+  commit(message: string, changeTree: { parentSha?: string; sha: string }) {
+    const parents = changeTree.parentSha ? [changeTree.parentSha] : [];
+    return this.createCommit(message, changeTree.sha, parents);
+  }
+
+  /**
+   * Update a branch reference to point to a new SHA
+   */
+  async patchBranch(
+    branchName: string,
+    sha: string,
+    opts: { force?: boolean } = {},
+  ): Promise<void> {
+    const force = opts.force || false;
+    // Gitea uses the same endpoint but with PATCH method
+    await this.request(`${this.repoURL}/git/refs/heads/${encodeURIComponent(branchName)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ sha, force }),
+    });
+  }
+
+  /**
+   * Rebase a single commit onto a new base
+   */
+  async rebaseSingleCommit(
+    baseCommit: { sha: string },
+    commit: GiteaCompareCommit,
+  ): Promise<{ sha: string }> {
+    // Get the diff between the commit and its parent
+    const parentSha = commit.parents[0]?.sha;
+    if (!parentSha) {
+      // No parent, just return the commit as is
+      return { sha: commit.sha };
+    }
+
+    // Get the differences for this specific commit
+    const result = await this.getDifferences(parentSha, commit.sha);
+    const files = result.files || [];
+
+    // If no files changed, return the base commit
+    if (files.length === 0) {
+      return baseCommit;
+    }
+
+    // For each changed file, we need to get its content from the commit
+    // and create a new tree entry
+    const treeUpdates: { path: string; sha: string | null }[] = [];
+
+    for (const file of files) {
+      if (file.status === 'removed') {
+        treeUpdates.push({ path: file.filename, sha: null });
+      } else {
+        // Get the file SHA from the commit's tree
+        try {
+          const sha = await this.getFileSha(file.filename, {
+            branch: commit.sha,
+            repoURL: this.repoURL,
+          });
+          treeUpdates.push({ path: file.filename, sha });
+        } catch (e) {
+          console.warn(`Could not get SHA for file ${file.filename}`, e);
+        }
+      }
+
+      // Handle renamed files
+      if (file.status === 'renamed' && file.previous_filename) {
+        treeUpdates.push({ path: file.previous_filename, sha: null });
+      }
+    }
+
+    // Create a new tree based on the base commit with the diff applied
+    const tree = await this.updateTree(baseCommit.sha, treeUpdates);
+
+    // Create a new commit with the original message and author info
+    const { message, author, committer } = commit.commit;
+    const newCommit = await this.createCommit(
+      message,
+      tree.sha,
+      [baseCommit.sha],
+      author ? { name: author.name || '', email: author.email || '', date: author.date } : undefined,
+      committer
+        ? { name: committer.name || '', email: committer.email || '', date: committer.date }
+        : undefined,
+    );
+
+    return newCommit;
+  }
+
+  /**
+   * Rebase an array of commits one-by-one, starting from a given base SHA
+   */
+  async rebaseCommits(
+    baseCommit: { sha: string },
+    commits: GiteaCompareCommit[],
+  ): Promise<{ sha: string }> {
+    // If no commits or the first commit's parent already matches the base, return as is
+    if (commits.length === 0) {
+      return baseCommit;
+    }
+
+    if (commits[0].parents[0]?.sha === baseCommit.sha) {
+      // Already rebased, return the last commit
+      const head = commits[commits.length - 1];
+      return { sha: head.sha };
+    }
+
+    // Re-create each commit over the new base
+    let currentBase = baseCommit;
+    for (const commit of commits) {
+      currentBase = await this.rebaseSingleCommit(currentBase, commit);
+    }
+
+    return currentBase;
+  }
+
+  /**
+   * Rebase a branch onto the default branch
+   */
+  async rebaseBranch(branch: string): Promise<{ sha: string }> {
+    try {
+      // Get the diff between the default branch and the editorial workflow branch
+      const { commits } = await this.getDifferences(this.branch, branch);
+
+      // Get the current head of the default branch as the base
+      const defaultBranch = await this.getDefaultBranch();
+      const baseCommit = { sha: defaultBranch.commit.id };
+
+      // Rebase the commits onto the base
+      const rebasedHead = await this.rebaseCommits(baseCommit, commits);
+
+      return rebasedHead;
+    } catch (error) {
+      console.error('Error rebasing branch:', error);
+      throw error;
+    }
   }
 }
