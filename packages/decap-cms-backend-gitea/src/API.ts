@@ -51,6 +51,8 @@ import type {
 
 export const API_NAME = 'Gitea';
 
+export const MOCK_PULL_REQUEST = -1;
+
 type TreeEntry = {
   path: string;
   mode: string;
@@ -65,6 +67,8 @@ export interface Config {
   repo?: string;
   originRepo?: string;
   cmsLabelPrefix?: string;
+  useOpenAuthoring?: boolean;
+  initialWorkflowStatus?: string;
 }
 
 enum FileOperation {
@@ -130,6 +134,8 @@ export default class API {
   repoURL: string;
   originRepoURL: string;
   cmsLabelPrefix: string;
+  useOpenAuthoring: boolean;
+  initialWorkflowStatus: string;
 
   _userPromise?: Promise<GiteaUser>;
   _metadataSemaphore?: Semaphore;
@@ -145,6 +151,8 @@ export default class API {
     this.repoURL = `/repos/${this.repo}`;
     this.originRepoURL = `/repos/${this.originRepo}`;
     this.cmsLabelPrefix = config.cmsLabelPrefix || '';
+    this.useOpenAuthoring = config.useOpenAuthoring || false;
+    this.initialWorkflowStatus = config.initialWorkflowStatus || 'draft';
 
     const [repoParts, originRepoParts] = [this.repo.split('/'), this.originRepo.split('/')];
     this.repoOwner = repoParts[0];
@@ -286,11 +294,20 @@ export default class API {
   }
 
   generateContentKey(collectionName: string, slug: string) {
-    return generateContentKey(collectionName, slug);
+    const contentKey = generateContentKey(collectionName, slug);
+    if (!this.useOpenAuthoring) {
+      return contentKey;
+    }
+    // In open authoring, include the repo in the content key
+    return `${this.repo}/${contentKey}`;
   }
 
   parseContentKey(contentKey: string) {
-    return parseContentKey(contentKey);
+    if (!this.useOpenAuthoring) {
+      return parseContentKey(contentKey);
+    }
+    // In open authoring, strip the repo prefix before parsing
+    return parseContentKey(contentKey.slice(this.repo.length + 1));
   }
 
   async readFile(
@@ -529,7 +546,63 @@ export default class API {
     return this.request(`${this.originRepoURL}/pulls`, { params });
   }
 
+  /**
+   * Get the head reference for a branch (used for cross-fork PRs)
+   */
+  async getHeadReference(head: string): Promise<string> {
+    return `${this.repoOwner}:${head}`;
+  }
+
+  /**
+   * Get PR for open authoring - maps PR state to workflow status
+   */
+  async getOpenAuthoringPullRequest(
+    branch: string,
+    pullRequests: GiteaPullRequest[],
+  ): Promise<GiteaPullRequest> {
+    // In open authoring, we can't use labels since contributors don't have permission
+    // Status is derived from PR state: no PR = draft, open PR = pending_review
+    const branchData = await this.getBranch(branch).catch(() => {
+      throw new APIError('content is not under editorial workflow', 404, API_NAME);
+    });
+
+    // Filter PRs by head SHA to find matching one
+    const pullRequest = pullRequests.find(pr => pr.head.sha === branchData.commit.id);
+
+    if (!pullRequest) {
+      // No PR found - return mock PR with draft status
+      return {
+        head: { sha: branchData.commit.id },
+        number: MOCK_PULL_REQUEST,
+        labels: [{ name: statusToLabel(this.initialWorkflowStatus, this.cmsLabelPrefix) }],
+        state: 'open',
+      } as unknown as GiteaPullRequest;
+    }
+
+    // PR exists - set status based on PR state
+    const statusLabel =
+      pullRequest.state === 'closed'
+        ? statusToLabel(this.initialWorkflowStatus, this.cmsLabelPrefix)
+        : statusToLabel('pending_review', this.cmsLabelPrefix);
+
+    // Filter out CMS labels and add the appropriate one
+    pullRequest.labels = pullRequest.labels.filter(
+      l => !isCMSLabel(l.name, this.cmsLabelPrefix),
+    );
+    pullRequest.labels.push({ name: statusLabel } as GiteaLabel);
+
+    return pullRequest;
+  }
+
   async getBranchPullRequest(branchName: string): Promise<GiteaPullRequest> {
+    if (this.useOpenAuthoring) {
+      // Open authoring: get all PRs (open and closed) and use special handling
+      const headRef = await this.getHeadReference(branchName);
+      const allPRs = await this.getPullRequests('all', headRef);
+      return this.getOpenAuthoringPullRequest(branchName, allPRs);
+    }
+
+    // Standard mode: look for open PRs with CMS labels
     const pullRequests = await this.getPullRequests('open', `${this.repoOwner}:${branchName}`);
     if (pullRequests.length > 0) {
       return pullRequests[0];
@@ -706,13 +779,74 @@ export default class API {
     await this.updatePullRequestLabels(pullRequest.number, [...currentLabels, label.id]);
   }
 
-  async listUnpublishedBranches(): Promise<string[]> {
-    const pullRequests = await this.getPullRequests('open');
-    const cmsBranches = pullRequests
-      .filter(pr => pr.head.ref.startsWith(`${CMS_BRANCH_PREFIX}/`))
-      .map(pr => pr.head.ref);
+  /**
+   * Filter open authoring branches - remove merged ones
+   */
+  filterOpenAuthoringBranches = async (
+    branch: string,
+  ): Promise<{ branch: string; filter: boolean }> => {
+    try {
+      const pullRequest = await this.getBranchPullRequest(branch);
+      const { state, merged_at: mergedAt } = pullRequest;
 
-    return cmsBranches;
+      if (pullRequest.number !== MOCK_PULL_REQUEST && state === 'closed' && mergedAt) {
+        // PR was merged, delete branch
+        await this.deleteBranch(branch);
+        return { branch, filter: false };
+      }
+      return { branch, filter: true };
+    } catch (e) {
+      return { branch, filter: false };
+    }
+  };
+
+  /**
+   * Get all CMS branches in the fork for open authoring
+   */
+  async getOpenAuthoringBranches(): Promise<{ ref: string }[]> {
+    try {
+      // Fetch branches matching pattern: cms/${repo}/*
+      const branches: GiteaBranch[] = await this.requestAllPages(
+        `${this.repoURL}/branches`,
+      );
+
+      // Filter to only CMS branches for this repo
+      const prefix = `${CMS_BRANCH_PREFIX}/${this.repo}/`;
+      return branches
+        .filter(b => b.name.startsWith(prefix))
+        .map(b => ({ ref: `refs/heads/${b.name}` }));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async listUnpublishedBranches(): Promise<string[]> {
+    console.log(
+      '%c Checking for Unpublished entries',
+      'line-height: 30px;text-align: center;font-weight: bold',
+    );
+
+    let branches: string[];
+
+    if (this.useOpenAuthoring) {
+      // Open authoring: branches can exist without a PR
+      const cmsBranches = await this.getOpenAuthoringBranches();
+      branches = cmsBranches.map(b => b.ref.slice('refs/heads/'.length));
+
+      // Filter out merged branches
+      const branchesWithFilter = await Promise.all(
+        branches.map(b => this.filterOpenAuthoringBranches(b)),
+      );
+      branches = branchesWithFilter.filter(b => b.filter).map(b => b.branch);
+    } else {
+      // Standard mode: get branches from open PRs
+      const pullRequests = await this.getPullRequests('open');
+      branches = pullRequests
+        .filter(pr => pr.head.ref.startsWith(`${CMS_BRANCH_PREFIX}/`))
+        .map(pr => pr.head.ref);
+    }
+
+    return branches;
   }
 
   /**
@@ -769,25 +903,53 @@ export default class API {
     const branch = branchFromContentKey(contentKey);
     const pullRequest = await this.getBranchPullRequest(branch);
 
-    // Get current PR state
-    const currentState = pullRequest.state;
+    if (!this.useOpenAuthoring) {
+      // Standard mode: use labels for status tracking
+      const currentState = pullRequest.state;
 
-    // Handle status transitions that require PR state changes
-    if (currentState === 'open' && newStatus === 'draft') {
-      // When moving to draft, close the PR (makes it less visible)
-      await this.closePR(pullRequest.number);
-      // Fetch updated PR to set status on
-      const updatedPR = await this.getBranchPullRequest(branch);
-      await this.setPullRequestStatus(updatedPR, newStatus);
-    } else if (currentState === 'closed' && newStatus === 'pending_review') {
-      // When moving to pending_review from a closed PR, reopen it
-      await this.openPR(pullRequest.number);
-      // Fetch updated PR to set status on
-      const updatedPR = await this.getBranchPullRequest(branch);
-      await this.setPullRequestStatus(updatedPR, newStatus);
+      // Handle status transitions that require PR state changes
+      if (currentState === 'open' && newStatus === 'draft') {
+        // When moving to draft, close the PR (makes it less visible)
+        await this.closePR(pullRequest.number);
+        // Fetch updated PR to set status on
+        const updatedPR = await this.getBranchPullRequest(branch);
+        await this.setPullRequestStatus(updatedPR, newStatus);
+      } else if (currentState === 'closed' && newStatus === 'pending_review') {
+        // When moving to pending_review from a closed PR, reopen it
+        await this.openPR(pullRequest.number);
+        // Fetch updated PR to set status on
+        const updatedPR = await this.getBranchPullRequest(branch);
+        await this.setPullRequestStatus(updatedPR, newStatus);
+      } else {
+        // For other transitions, just update the status label
+        await this.setPullRequestStatus(pullRequest, newStatus);
+      }
     } else {
-      // For other transitions, just update the status label
-      await this.setPullRequestStatus(pullRequest, newStatus);
+      // Open authoring mode: status is managed via PR state, not labels
+      if (newStatus === 'pending_publish') {
+        throw new Error('Open Authoring entries may not be set to the status "pending_publish".');
+      }
+
+      if (pullRequest.number !== MOCK_PULL_REQUEST) {
+        // Real PR exists
+        const { state } = pullRequest;
+
+        if (state === 'open' && newStatus === 'draft') {
+          // Close PR to mark as draft
+          await this.closePR(pullRequest.number);
+        }
+        if (state === 'closed' && newStatus === 'pending_review') {
+          // Reopen PR to mark as pending_review
+          await this.openPR(pullRequest.number);
+        }
+      } else if (newStatus === 'pending_review') {
+        // No PR yet, but user wants to submit for review - create PR
+        const headRef = await this.getHeadReference(branch);
+        const diff = await this.getDifferences(this.branch, headRef);
+        const title =
+          diff.commits[0]?.commit?.message || API.DEFAULT_COMMIT_MESSAGE;
+        await this.createPR(title, branch);
+      }
     }
   }
 
@@ -825,18 +987,22 @@ export default class API {
     const unpublished = options.unpublished || false;
 
     if (!unpublished) {
-      // New entry - create branch and PR
+      // New entry - create branch and potentially PR
       await this.createBranch(branch, this.branch);
 
       // Persist files to the branch
       const operations = await this.getChangeFileOperationsForBranch(files, branch);
       await this.changeFilesOnBranch(operations, options, branch);
 
-      // Create PR
-      const pr = await this.createPR(options.commitMessage, branch);
-      // Set initial status
-      const status = options.status || 'draft';
-      await this.setPullRequestStatus(pr, status);
+      if (this.useOpenAuthoring) {
+        // Open authoring: only create branch, PR created on status change to pending_review
+        // No label setting since contributors don't have permission
+      } else {
+        // Standard mode: create PR and set status
+        const pr = await this.createPR(options.commitMessage, branch);
+        const status = options.status || this.initialWorkflowStatus;
+        await this.setPullRequestStatus(pr, status);
+      }
     } else {
       // Entry is already on editorial workflow - rebase and update
       try {
@@ -953,16 +1119,30 @@ export default class API {
     headBranch: string,
   ): Promise<{ commits: GiteaCompareCommit[]; files: GiteaChangedFile[] }> {
     // Gitea compare endpoint: GET /repos/{owner}/{repo}/compare/{basehead}
-    const result: GiteaCompareResponse & { files?: GiteaChangedFile[] } = await this.request(
-      `${this.originRepoURL}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(headBranch)}`,
-    );
+    // For open authoring, retry since cross-repo comparisons may have eventual consistency delays
+    const attempts = this.useOpenAuthoring ? 10 : 1;
 
-    // The Gitea compare API returns commits but may not include files in the same way as GitHub
-    // We may need to get files from each commit or from the PR files endpoint
-    return {
-      commits: result.commits || [],
-      files: result.files || [],
-    };
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        const result: GiteaCompareResponse & { files?: GiteaChangedFile[] } = await this.request(
+          `${this.originRepoURL}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(headBranch)}`,
+        );
+
+        return {
+          commits: result.commits || [],
+          files: result.files || [],
+        };
+      } catch (e) {
+        if (i === attempts) {
+          console.warn(`Reached maximum number of attempts '${attempts}' for getDifferences`);
+          throw e;
+        }
+        // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, i * 500));
+      }
+    }
+
+    throw new APIError('Not Found', 404, API_NAME);
   }
 
   /**

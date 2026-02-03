@@ -5,6 +5,7 @@ import {
   asyncLock,
   basename,
   blobToFileObj,
+  branchFromContentKey,
   Cursor,
   CURSOR_COMPATIBILITY_SYMBOL,
   entriesByFiles,
@@ -16,10 +17,13 @@ import {
   getPreviewStatus,
   runWithLock,
   unsentRequest,
+  unpublishedEntries,
+  contentKeyFromBranch,
 } from 'decap-cms-lib-util';
 
-import API, { API_NAME } from './API';
+import API, { API_NAME, MOCK_PULL_REQUEST } from './API';
 import AuthenticationPage from './AuthenticationPage';
+import type { GiteaRepository } from './types';
 
 import type {
   AssetProxy,
@@ -49,6 +53,7 @@ export default class Gitea implements Implementation {
     proxied: boolean;
     API: API | null;
     useWorkflow?: boolean;
+    useOpenAuthoring?: boolean;
   };
   originRepo: string;
   repo?: string;
@@ -58,6 +63,9 @@ export default class Gitea implements Implementation {
   token: string | null;
   cmsLabelPrefix: string;
   previewContext: string;
+  openAuthoringEnabled: boolean;
+  alwaysForkEnabled: boolean;
+  initialWorkflowStatus: string;
   _currentUserPromise?: Promise<GiteaUser>;
   _userIsOriginMaintainerPromises?: {
     [key: string]: Promise<boolean>;
@@ -69,6 +77,7 @@ export default class Gitea implements Implementation {
       proxied: false,
       API: null,
       useWorkflow: false,
+      useOpenAuthoring: false,
       ...options,
     };
 
@@ -79,10 +88,6 @@ export default class Gitea implements Implementation {
       throw new Error('The Gitea backend needs a "repo" in the backend configuration.');
     }
 
-    if (this.options.useWorkflow) {
-      throw new Error('The Gitea backend does not support editorial workflow.');
-    }
-
     this.api = this.options.API || null;
     this.repo = this.originRepo = config.backend.repo || '';
     this.branch = config.backend.branch?.trim() || 'master';
@@ -91,7 +96,19 @@ export default class Gitea implements Implementation {
     this.mediaFolder = config.media_folder;
     this.cmsLabelPrefix = config.backend.cms_label_prefix || '';
     this.previewContext = config.backend.preview_context || '';
+    this.openAuthoringEnabled = config.backend.open_authoring || false;
+    this.alwaysForkEnabled = config.backend.always_fork || false;
+    this.initialWorkflowStatus = config.backend.initial_workflow_status || 'draft';
     this.lock = asyncLock();
+
+    // Validate open authoring configuration
+    if (this.openAuthoringEnabled) {
+      if (!this.options.useWorkflow) {
+        throw new Error(
+          'backend.open_authoring is true but publish_mode is not set to editorial_workflow.',
+        );
+      }
+    }
   }
 
   isGitBackend() {
@@ -154,8 +171,118 @@ export default class Gitea implements Implementation {
     return this._userIsOriginMaintainerPromises[username];
   }
 
+  /**
+   * Check if a fork exists for the current user with the correct parent
+   */
+  async forkExists({ token }: { token: string }): Promise<boolean> {
+    try {
+      const result: GiteaRepository = await fetch(`${this.apiRoot}/repos/${this.repo}`, {
+        headers: { Authorization: `token ${token}` },
+      }).then(res => res.json());
+
+      // Check that it's a fork and has the correct parent
+      const parentRepo = result.parent as GiteaRepository | null;
+      return (
+        result.fork === true &&
+        parentRepo !== null &&
+        parentRepo.full_name.toLowerCase() === this.originRepo.toLowerCase()
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * Poll until fork is available (fork creation is async in Gitea)
+   */
+  async pollUntilForkExists({ token, interval = 250 }: { token: string; interval?: number }) {
+    const maxAttempts = 20; // 5 seconds max
+    for (let i = 0; i < maxAttempts; i++) {
+      const exists = await this.forkExists({ token });
+      if (exists) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, interval));
+    }
+    return false;
+  }
+
+  /**
+   * Create a fork or sync existing fork with upstream
+   */
+  async authenticateWithFork(state: Credentials, user: GiteaUser): Promise<{
+    useOpenAuthoring: boolean;
+    repo: string;
+  }> {
+    const token = state.token as string;
+
+    // Check if user is a maintainer of the origin repo
+    const isOriginMaintainer = await this.userIsOriginMaintainer({ token });
+
+    if (isOriginMaintainer && !this.alwaysForkEnabled) {
+      // Maintainers work directly on the origin repo
+      return {
+        useOpenAuthoring: false,
+        repo: this.originRepo,
+      };
+    }
+
+    // Non-maintainers (or always_fork enabled) use a fork
+    const repoName = this.originRepo.split('/')[1];
+    const forkRepo = `${user.login}/${repoName}`;
+    this.repo = forkRepo;
+
+    const forkExists = await this.forkExists({ token });
+
+    if (forkExists) {
+      // Fork exists - try to sync with upstream
+      try {
+        await fetch(`${this.apiRoot}/repos/${forkRepo}/mirror-sync`, {
+          method: 'POST',
+          headers: { Authorization: `token ${token}` },
+        });
+      } catch (e) {
+        // Sync might not be available, continue anyway
+        console.warn('Could not sync fork with upstream:', e);
+      }
+    } else {
+      // Create the fork
+      await fetch(`${this.apiRoot}/repos/${this.originRepo}/forks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `token ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+
+      // Wait for fork to be created
+      const created = await this.pollUntilForkExists({ token });
+      if (!created) {
+        throw new Error('Timed out waiting for fork to be created');
+      }
+    }
+
+    return {
+      useOpenAuthoring: true,
+      repo: forkRepo,
+    };
+  }
+
   async authenticate(state: Credentials) {
     this.token = state.token as string;
+
+    // For open authoring, we need to check fork status first
+    if (this.openAuthoringEnabled) {
+      // Get user info first
+      const user = await this.currentUser({ token: this.token });
+
+      // Set up fork if needed
+      const { useOpenAuthoring, repo } = await this.authenticateWithFork(state, user);
+      this.repo = repo;
+      this.options.useOpenAuthoring = useOpenAuthoring;
+    }
+
     const apiCtor = API;
     this.api = new apiCtor({
       token: this.token,
@@ -164,25 +291,32 @@ export default class Gitea implements Implementation {
       originRepo: this.originRepo,
       apiRoot: this.apiRoot,
       cmsLabelPrefix: this.cmsLabelPrefix,
+      useOpenAuthoring: this.options.useOpenAuthoring,
+      initialWorkflowStatus: this.initialWorkflowStatus,
     });
+
     const user = await this.api!.user();
-    const isCollab = await this.api!.hasWriteAccess().catch(error => {
-      error.message = stripIndent`
-        Repo "${this.repo}" not found.
 
-        Please ensure the repo information is spelled correctly.
+    if (!this.openAuthoringEnabled) {
+      // Only check write access if not using open authoring
+      const isCollab = await this.api!.hasWriteAccess().catch(error => {
+        error.message = stripIndent`
+          Repo "${this.repo}" not found.
 
-        If the repo is private, make sure you're logged into a Gitea account with access.
+          Please ensure the repo information is spelled correctly.
 
-        If your repo is under an organization, ensure the organization has granted access to Static
-        CMS.
-      `;
-      throw error;
-    });
+          If the repo is private, make sure you're logged into a Gitea account with access.
 
-    // Unauthorized user
-    if (!isCollab) {
-      throw new Error('Your Gitea user account does not have access to this repo.');
+          If your repo is under an organization, ensure the organization has granted access to Static
+          CMS.
+        `;
+        throw error;
+      });
+
+      // Unauthorized user
+      if (!isCollab) {
+        throw new Error('Your Gitea user account does not have access to this repo.');
+      }
     }
 
     // Authorized user
@@ -419,34 +553,81 @@ export default class Gitea implements Implementation {
   }
 
   async unpublishedEntries() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return {} as any;
+    const listEntriesKeys = () =>
+      this.api!.listUnpublishedBranches().then(branches =>
+        branches.map(branch => contentKeyFromBranch(branch)),
+      );
+
+    const ids = await unpublishedEntries(listEntriesKeys);
+    return ids;
   }
 
-  async unpublishedEntry() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return {} as any;
+  async unpublishedEntry({
+    id,
+    collection,
+    slug,
+  }: {
+    id?: string;
+    collection?: string;
+    slug?: string;
+  }) {
+    if (id) {
+      const data = await this.api!.retrieveUnpublishedEntryData(id);
+      return data;
+    } else if (collection && slug) {
+      const contentKey = this.api!.generateContentKey(collection, slug);
+      const data = await this.api!.retrieveUnpublishedEntryData(contentKey);
+      return data;
+    } else {
+      throw new Error('Missing unpublished entry id or collection and slug');
+    }
   }
 
-  async unpublishedEntryDataFile() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return {} as any;
+  async unpublishedEntryDataFile(collection: string, slug: string, path: string, id: string) {
+    const contentKey = this.api!.generateContentKey(collection, slug);
+    const branch = branchFromContentKey(contentKey);
+    const data = (await this.api!.readFile(path, id, { branch })) as string;
+    return data;
   }
 
-  async unpublishedEntryMediaFile() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return {} as any;
+  async unpublishedEntryMediaFile(collection: string, slug: string, path: string, id: string) {
+    const contentKey = this.api!.generateContentKey(collection, slug);
+    const branch = branchFromContentKey(contentKey);
+    const blob = (await this.api!.readFile(path, id, { branch, parseText: false })) as Blob;
+    const name = basename(path);
+    const fileObj = blobToFileObj(name, blob);
+    return {
+      id: path,
+      name,
+      path,
+      size: fileObj.size,
+      displayURL: URL.createObjectURL(fileObj),
+      file: fileObj,
+    };
   }
 
-  async updateUnpublishedEntryStatus() {
-    return;
+  updateUnpublishedEntryStatus(collection: string, slug: string, newStatus: string) {
+    return runWithLock(
+      this.lock,
+      () => this.api!.updateUnpublishedEntryStatus(collection, slug, newStatus),
+      'Failed to acquire update entry status lock',
+    );
   }
 
-  async publishUnpublishedEntry() {
-    return;
+  publishUnpublishedEntry(collection: string, slug: string) {
+    return runWithLock(
+      this.lock,
+      () => this.api!.publishUnpublishedEntry(collection, slug),
+      'Failed to acquire publish entry lock',
+    );
   }
-  async deleteUnpublishedEntry() {
-    return;
+
+  deleteUnpublishedEntry(collection: string, slug: string) {
+    return runWithLock(
+      this.lock,
+      () => this.api!.deleteUnpublishedEntry(collection, slug),
+      'Failed to acquire delete entry lock',
+    );
   }
 
   async getDeployPreview(collection: string, slug: string) {

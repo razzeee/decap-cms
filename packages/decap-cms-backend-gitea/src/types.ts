@@ -152,7 +152,7 @@ export type GiteaRepository = {
   open_pr_counter: number;
   original_url: string;
   owner: GiteaUser;
-  parent: null;
+  parent: GiteaRepository | null;
   permissions: GiteaRepositoryPermissions;
   private: boolean;
   release_counter: number;
