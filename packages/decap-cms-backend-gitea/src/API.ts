@@ -372,8 +372,8 @@ export default class API {
     const hasFolder = Boolean(folder);
     // Use branch:folder syntax for efficient folder-specific tree fetching
     // Encode branch and folder separately, then join with colon
-    const encodedTreeRef = hasFolder 
-      ? `${encodeURIComponent(branch)}:${encodeURIComponent(folder)}` 
+    const encodedTreeRef = hasFolder
+      ? `${encodeURIComponent(branch)}:${encodeURIComponent(folder)}`
       : encodeURIComponent(branch);
     try {
       const result: GitGetTreeResponse = await this.request(
