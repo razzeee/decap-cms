@@ -168,7 +168,7 @@ describe('gitea API', () => {
     });
 
     it('should fetch url with authorization header', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
 
       fetch.mockResolvedValue({
         text: jest.fn().mockResolvedValue('some response'),
@@ -190,7 +190,7 @@ describe('gitea API', () => {
     });
 
     it('should throw error on not ok response', async () => {
-      const api = new API({ branch: 'gt-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gt-pages', repo: 'owner/my-repo', token: 'token' });
 
       fetch.mockResolvedValue({
         text: jest.fn().mockResolvedValue({ message: 'some error' }),
@@ -210,7 +210,7 @@ describe('gitea API', () => {
     });
 
     it('should allow overriding requestHeaders to return a promise ', async () => {
-      const api = new API({ branch: 'gt-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gt-pages', repo: 'owner/my-repo', token: 'token' });
 
       api.requestHeaders = jest.fn().mockResolvedValue({
         Authorization: 'promise-token',
@@ -539,13 +539,13 @@ describe('gitea API', () => {
       });
     });
     it('should create branch', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
       api.request = jest.fn().mockResolvedValue({ name: 'cms/new-branch' });
 
       await expect(api.createBranch('cms/new-branch', 'master')).resolves.toEqual({
         name: 'cms/new-branch',
       });
-      expect(api.request).toHaveBeenCalledWith('/repos/my-repo/branches', {
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/my-repo/branches', {
         method: 'POST',
         body: JSON.stringify({
           new_branch_name: 'cms/new-branch',
@@ -555,17 +555,17 @@ describe('gitea API', () => {
     });
 
     it('should create pull request with owner:branch head format', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
       api.request = jest.fn().mockResolvedValue({ number: 1 });
 
       await expect(
         api.createPR('title', 'cms/new-branch', 'Check out the changes!'),
       ).resolves.toEqual({ number: 1 });
-      expect(api.request).toHaveBeenCalledWith('/repos/my-repo/pulls', {
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/my-repo/pulls', {
         method: 'POST',
         body: JSON.stringify({
           title: 'title',
-          head: 'my-repo:cms/new-branch',
+          head: 'owner:cms/new-branch',
           base: 'gh-pages',
           body: 'Check out the changes!',
         }),
@@ -573,11 +573,11 @@ describe('gitea API', () => {
     });
 
     it('should get pull requests', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
       api.request = jest.fn().mockResolvedValue([{ number: 1 }]);
 
       await expect(api.getPullRequests('open', 'head')).resolves.toEqual([{ number: 1 }]);
-      expect(api.request).toHaveBeenCalledWith('/repos/my-repo/pulls', {
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/my-repo/pulls', {
         params: { state: 'open', head: 'head' },
       });
     });
@@ -585,7 +585,7 @@ describe('gitea API', () => {
     it('should list unpublished branches (standard mode)', async () => {
       const api = new API({
         branch: 'gh-pages',
-        repo: 'my-repo',
+        repo: 'owner/my-repo',
         token: 'token',
         cmsLabelPrefix: 'decap-cms/',
       });
@@ -602,7 +602,7 @@ describe('gitea API', () => {
         'cms/branch1',
         'cms/branch2',
       ]);
-      expect(api.request).toHaveBeenCalledWith('/repos/my-repo/pulls', {
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/my-repo/pulls', {
         params: { state: 'open' },
       });
     });
@@ -637,20 +637,20 @@ describe('gitea API', () => {
     });
 
     it('should update pull request labels', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
       api.request = jest.fn().mockResolvedValue([{ id: 1, name: 'label' }]);
 
       await expect(api.updatePullRequestLabels(1, [1])).resolves.toEqual([
         { id: 1, name: 'label' },
       ]);
-      expect(api.request).toHaveBeenCalledWith('/repos/my-repo/issues/1/labels', {
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/my-repo/issues/1/labels', {
         method: 'PUT',
         body: JSON.stringify({ labels: [1] }),
       });
     });
 
     it('should get labels', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
       api.request = jest.fn().mockResolvedValue([
         { id: 1, name: 'label1' },
         { id: 2, name: 'label2' },
@@ -660,11 +660,11 @@ describe('gitea API', () => {
         { id: 1, name: 'label1' },
         { id: 2, name: 'label2' },
       ]);
-      expect(api.request).toHaveBeenCalledWith('/repos/my-repo/labels');
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/my-repo/labels');
     });
 
     it('should create label', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
       api.request = jest.fn().mockResolvedValue({ id: 1, name: 'new-label', color: '0052cc' });
 
       await expect(api.createLabel('new-label', '0052cc')).resolves.toEqual({
@@ -672,14 +672,14 @@ describe('gitea API', () => {
         name: 'new-label',
         color: '0052cc',
       });
-      expect(api.request).toHaveBeenCalledWith('/repos/my-repo/labels', {
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/my-repo/labels', {
         method: 'POST',
         body: JSON.stringify({ name: 'new-label', color: '0052cc' }),
       });
     });
 
     it('should get or create label when label exists', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
       const existingLabel = { id: 1, name: 'existing-label', color: '0052cc' };
       api.getLabels = jest.fn().mockResolvedValue([existingLabel]);
       api.createLabel = jest.fn();
@@ -690,7 +690,7 @@ describe('gitea API', () => {
     });
 
     it('should get or create label when label does not exist', async () => {
-      const api = new API({ branch: 'gh-pages', repo: 'my-repo', token: 'token' });
+      const api = new API({ branch: 'gh-pages', repo: 'owner/my-repo', token: 'token' });
       const newLabel = { id: 2, name: 'new-label', color: '0052cc' };
       api.getLabels = jest.fn().mockResolvedValue([{ id: 1, name: 'other-label' }]);
       api.createLabel = jest.fn().mockResolvedValue(newLabel);
@@ -704,7 +704,7 @@ describe('gitea API', () => {
     it('should set pull request status', async () => {
       const api = new API({
         branch: 'gh-pages',
-        repo: 'my-repo',
+        repo: 'owner/my-repo',
         token: 'token',
         cmsLabelPrefix: 'decap-cms/',
       });
@@ -821,7 +821,7 @@ describe('gitea API', () => {
       api.getBranchPullRequest = jest.fn().mockResolvedValue(pullRequest);
       api.getDifferences = jest.fn().mockResolvedValue({ files: [], commits: [], total_commits: 0 });
 
-      const result = await api.retrieveUnpublishedEntryData('posts.test');
+      const result = await api.retrieveUnpublishedEntryData('posts/test');
 
       expect(result.status).toEqual('draft');
     });

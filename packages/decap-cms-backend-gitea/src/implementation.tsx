@@ -170,26 +170,41 @@ export default class Gitea implements Implementation {
   }
 
   async pollUntilForkExists({ repo, token }: { repo: string; token: string }) {
-    const pollDelay = 250; // milliseconds
+    const initialPollDelay = 250; // milliseconds
+    const maxPollDelay = 2000; // milliseconds
+    const maxWaitMs = 60000; // overall timeout in milliseconds
+    const startTime = Date.now();
+
+    let pollDelay = initialPollDelay;
     let repoExists = false;
-    while (!repoExists) {
-      repoExists = await fetch(`${this.apiRoot}${repo}`, {
+
+    while (!repoExists && Date.now() - startTime < maxWaitMs) {
+      const response = await fetch(`${this.apiRoot}${repo}`, {
         headers: { Authorization: `token ${token}` },
-      })
-        .then(() => true)
-        .catch(err => {
-          if (err && err.status === 404) {
-            return false;
-          } else {
-            return Promise.reject(err);
-          }
-        });
-      // wait between polls
+      });
+
+      if (response.ok) {
+        repoExists = true;
+      } else if (response.status === 404) {
+        repoExists = false;
+      } else {
+        // For non-404, non-OK responses, fail fast instead of looping indefinitely.
+        throw new Error(
+          `Error while checking for fork existence: ${response.status} ${response.statusText}`,
+        );
+      }
+
+      // wait between polls if the repo does not yet exist
       if (!repoExists) {
         await new Promise(resolve => setTimeout(resolve, pollDelay));
+        // simple backoff up to a maximum delay
+        pollDelay = Math.min(pollDelay * 2, maxPollDelay);
       }
     }
-    return Promise.resolve();
+
+    if (!repoExists) {
+      throw new Error('Timed out waiting for fork to be created.');
+    }
   }
 
   async authenticateWithFork({
@@ -197,7 +212,7 @@ export default class Gitea implements Implementation {
     getPermissionToFork,
   }: {
     userData: User;
-    getPermissionToFork: () => Promise<boolean> | boolean;
+    getPermissionToFork: () => Promise<void> | void;
   }) {
     if (!this.openAuthoringEnabled) {
       throw new Error('Cannot authenticate with fork; Open Authoring is turned off.');
