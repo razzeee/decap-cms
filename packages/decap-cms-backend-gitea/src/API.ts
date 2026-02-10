@@ -372,9 +372,11 @@ export default class API {
     const hasFolder = Boolean(folder);
     // Use branch:folder syntax for efficient folder-specific tree fetching
     const treeRef = hasFolder ? `${branch}:${folder}` : branch;
+    // Encode treeRef to handle paths with slashes and special characters
+    const encodedTreeRef = encodeURIComponent(treeRef);
     try {
       const result: GitGetTreeResponse = await this.request(
-        `${repoURL}/git/trees/${treeRef}`,
+        `${repoURL}/git/trees/${encodedTreeRef}`,
         {
           // Gitea API supports recursive=1 for getting the entire recursive tree
           // or omitting it to get the non-recursive tree

@@ -127,7 +127,11 @@ export default class Gitea implements Implementation {
   }
 
   authComponent() {
-    return AuthenticationPage;
+    const wrappedAuthenticationPage = (props: Record<string, unknown>) => (
+      <AuthenticationPage {...props} backend={this} />
+    );
+    wrappedAuthenticationPage.displayName = 'AuthenticationPage';
+    return wrappedAuthenticationPage;
   }
 
   async currentUser({ token }: { token: string }) {
@@ -169,14 +173,18 @@ export default class Gitea implements Implementation {
     const pollDelay = 250; // milliseconds
     let repoExists = false;
     while (!repoExists) {
-      try {
-        const response = await fetch(`${this.apiRoot}${repo}`, {
-          headers: { Authorization: `token ${token}` },
+      repoExists = await fetch(`${this.apiRoot}${repo}`, {
+        headers: { Authorization: `token ${token}` },
+      })
+        .then(() => true)
+        .catch(err => {
+          if (err && err.status === 404) {
+            console.log('This 404 was expected and handled appropriately.');
+            return false;
+          } else {
+            return Promise.reject(err);
+          }
         });
-        repoExists = response.ok;
-      } catch (err) {
-        repoExists = false;
-      }
       // wait between polls
       if (!repoExists) {
         await new Promise(resolve => setTimeout(resolve, pollDelay));
@@ -231,7 +239,10 @@ export default class Gitea implements Implementation {
       await this.api!.mergeUpstream();
       return Promise.resolve();
     } else {
-      await getPermissionToFork();
+      const permissionGranted = await getPermissionToFork();
+      if (!permissionGranted) {
+        return Promise.reject(new Error('Permission to create a fork was denied.'));
+      }
 
       const fork = await this.api!.createFork();
       return this.pollUntilForkExists({ repo: `/repos/${fork.full_name}`, token });
