@@ -370,14 +370,15 @@ export default class API {
   ): Promise<{ type: string; id: string; name: string; path: string; size: number }[]> {
     const folder = trim(path, '/');
     const hasFolder = Boolean(folder);
-    const prefix = hasFolder ? `${folder}/` : '';
+    // Use branch:folder syntax for efficient folder-specific tree fetching
+    const treeRef = hasFolder ? `${branch}:${folder}` : branch;
     try {
       const result: GitGetTreeResponse = await this.request(
-        `${repoURL}/git/trees/${branch}`,
+        `${repoURL}/git/trees/${treeRef}`,
         {
           // Gitea API supports recursive=1 for getting the entire recursive tree
           // or omitting it to get the non-recursive tree
-          params: depth > 1 || hasFolder ? { recursive: 1 } : {},
+          params: depth > 1 ? { recursive: 1 } : {},
         },
       );
       return (
@@ -385,17 +386,15 @@ export default class API {
           // filter only files and/or folders up to the required depth
           .filter(
             file =>
-              (!hasFolder || file.path.startsWith(prefix)) &&
               (!folderSupport ? file.type === 'blob' : true) &&
-              decodeURIComponent(hasFolder ? file.path.slice(prefix.length) : file.path).split(
-                '/',
-              ).length <= depth,
+              file.path &&
+              file.path.split('/').length <= depth,
           )
           .map(file => ({
             type: file.type,
             id: file.sha,
-            name: basename(hasFolder ? file.path.slice(prefix.length) : file.path),
-            path: hasFolder ? `${folder}/${file.path.slice(prefix.length)}` : file.path,
+            name: basename(file.path),
+            path: hasFolder ? `${folder}/${file.path}` : file.path,
             size: file.size!,
           }))
       );
@@ -568,16 +567,22 @@ export default class API {
     }
 
     // Filter out CMS labels for open authoring
-    pullRequest.labels = pullRequest.labels.filter(l => !isCMSLabel(l.name, this.cmsLabelPrefix));
+    const nonCmsLabels = pullRequest.labels.filter(
+      l => !isCMSLabel(l.name, this.cmsLabelPrefix),
+    );
 
     // Add synthetic CMS label based on PR state
     const cmsLabel =
       pullRequest.state === 'closed'
         ? { name: statusToLabel(this.initialWorkflowStatus, this.cmsLabelPrefix) }
         : { name: statusToLabel('pending_review', this.cmsLabelPrefix) };
-    pullRequest.labels.push(cmsLabel as GiteaLabel);
 
-    return { pullRequest, branch: data };
+    const updatedPullRequest: GiteaPullRequest = {
+      ...pullRequest,
+      labels: [...nonCmsLabels, cmsLabel as GiteaLabel],
+    };
+
+    return { pullRequest: updatedPullRequest, branch: data };
   }
 
   async getBranchPullRequest(branchName: string): Promise<GiteaPullRequest> {
@@ -771,7 +776,8 @@ export default class API {
     let branchData: GiteaBranch | null = null;
 
     if (this.useOpenAuthoring) {
-      const pullRequests = await this.getPullRequests('all');
+      const headRef = await this.getHeadReference(branch);
+      const pullRequests = await this.getPullRequests('all', headRef);
       const openAuthoringResult = await this.getOpenAuthoringPullRequest(branch, pullRequests);
       pullRequest = openAuthoringResult.pullRequest;
       branchData = openAuthoringResult.branch;

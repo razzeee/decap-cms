@@ -76,7 +76,7 @@ describe('gitea API', () => {
       api.createBranch = jest.fn().mockResolvedValue({ name: 'cms/posts/entry' });
 
       const changeOperations = [{ operation: 'create', path: 'content.md', content: 'test' }];
-      api.getChangeFileOperationsForBranch = jest.fn().mockResolvedValue(changeOperations);
+      api.getChangeFileOperations = jest.fn().mockResolvedValue(changeOperations);
       api.changeFilesOnBranch = jest.fn().mockResolvedValue({});
 
       const newPr = { number: 1, labels: [], head: { ref: 'cms/posts/entry' } };
@@ -90,7 +90,7 @@ describe('gitea API', () => {
 
       expect(api.getBranch).toHaveBeenCalledWith('cms/posts/entry');
       expect(api.createBranch).toHaveBeenCalledWith('cms/posts/entry', 'master');
-      expect(api.getChangeFileOperationsForBranch).toHaveBeenCalledWith(files, 'cms/posts/entry');
+      expect(api.getChangeFileOperations).toHaveBeenCalledWith(files, 'cms/posts/entry');
       expect(api.changeFilesOnBranch).toHaveBeenCalledWith(
         changeOperations,
         options,
@@ -111,7 +111,7 @@ describe('gitea API', () => {
       api.createBranch = jest.fn();
 
       const changeOperations = [{ operation: 'update', path: 'content.md', content: 'updated' }];
-      api.getChangeFileOperationsForBranch = jest.fn().mockResolvedValue(changeOperations);
+      api.getChangeFileOperations = jest.fn().mockResolvedValue(changeOperations);
       api.changeFilesOnBranch = jest.fn().mockResolvedValue({});
 
       api.createPR = jest.fn();
@@ -140,7 +140,7 @@ describe('gitea API', () => {
       api.createBranch = jest.fn().mockResolvedValue({ name: 'cms/contributor/repo/posts/entry' });
 
       const changeOperations = [{ operation: 'create', path: 'content.md', content: 'test' }];
-      api.getChangeFileOperationsForBranch = jest.fn().mockResolvedValue(changeOperations);
+      api.getChangeFileOperations = jest.fn().mockResolvedValue(changeOperations);
       api.changeFilesOnBranch = jest.fn().mockResolvedValue({});
 
       api.createPR = jest.fn();
@@ -415,25 +415,26 @@ describe('gitea API', () => {
     it('should get files by depth', async () => {
       const api = new API({ branch: 'master', repo: 'owner/repo' });
 
+      // Mock response for branch:folder syntax returns paths relative to folder
       const tree = [
         {
-          path: 'posts/post.md',
+          path: 'post.md',
           type: 'blob',
         },
         {
-          path: 'posts/dir1',
+          path: 'dir1',
           type: 'tree',
         },
         {
-          path: 'posts/dir1/nested-post.md',
+          path: 'dir1/nested-post.md',
           type: 'blob',
         },
         {
-          path: 'posts/dir1/dir2',
+          path: 'dir1/dir2',
           type: 'tree',
         },
         {
-          path: 'posts/dir1/dir2/nested-post.md',
+          path: 'dir1/dir2/nested-post.md',
           type: 'blob',
         },
       ];
@@ -447,8 +448,8 @@ describe('gitea API', () => {
         },
       ]);
       expect(api.request).toHaveBeenCalledTimes(1);
-      expect(api.request).toHaveBeenCalledWith('/repos/owner/repo/git/trees/master', {
-        params: { recursive: 1 },
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/repo/git/trees/master:posts', {
+        params: {},
       });
 
       jest.clearAllMocks();
@@ -465,7 +466,7 @@ describe('gitea API', () => {
         },
       ]);
       expect(api.request).toHaveBeenCalledTimes(1);
-      expect(api.request).toHaveBeenCalledWith('/repos/owner/repo/git/trees/master', {
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/repo/git/trees/master:posts', {
         params: { recursive: 1 },
       });
 
@@ -488,32 +489,33 @@ describe('gitea API', () => {
         },
       ]);
       expect(api.request).toHaveBeenCalledTimes(1);
-      expect(api.request).toHaveBeenCalledWith('/repos/owner/repo/git/trees/master', {
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/repo/git/trees/master:posts', {
         params: { recursive: 1 },
       });
     });
     it('should get files and folders', async () => {
       const api = new API({ branch: 'master', repo: 'owner/repo' });
 
+      // Mock response for branch:folder syntax returns paths relative to folder
       const tree = [
         {
-          path: 'media/image.png',
+          path: 'image.png',
           type: 'blob',
         },
         {
-          path: 'media/dir1',
+          path: 'dir1',
           type: 'tree',
         },
         {
-          path: 'media/dir1/nested-image.png',
+          path: 'dir1/nested-image.png',
           type: 'blob',
         },
         {
-          path: 'media/dir1/dir2',
+          path: 'dir1/dir2',
           type: 'tree',
         },
         {
-          path: 'media/dir1/dir2/nested-image.png',
+          path: 'dir1/dir2/nested-image.png',
           type: 'blob',
         },
       ];
@@ -532,8 +534,8 @@ describe('gitea API', () => {
         },
       ]);
       expect(api.request).toHaveBeenCalledTimes(1);
-      expect(api.request).toHaveBeenCalledWith('/repos/owner/repo/git/trees/master', {
-        params: { recursive: 1 },
+      expect(api.request).toHaveBeenCalledWith('/repos/owner/repo/git/trees/master:media', {
+        params: {},
       });
     });
     it('should create branch', async () => {
