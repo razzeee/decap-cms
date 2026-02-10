@@ -179,7 +179,6 @@ export default class Gitea implements Implementation {
         .then(() => true)
         .catch(err => {
           if (err && err.status === 404) {
-            console.log('This 404 was expected and handled appropriately.');
             return false;
           } else {
             return Promise.reject(err);
@@ -239,10 +238,7 @@ export default class Gitea implements Implementation {
       await this.api!.mergeUpstream();
       return Promise.resolve();
     } else {
-      const permissionGranted = await getPermissionToFork();
-      if (!permissionGranted) {
-        return Promise.reject(new Error('Permission to create a fork was denied.'));
-      }
+      await getPermissionToFork();
 
       const fork = await this.api!.createFork();
       return this.pollUntilForkExists({ repo: `/repos/${fork.full_name}`, token });
