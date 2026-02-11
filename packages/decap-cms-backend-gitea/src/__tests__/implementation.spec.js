@@ -406,7 +406,7 @@ describe('gitea backend implementation', () => {
 
         await giteaImplementation.authenticateWithFork({
           userData: { token: 'token' },
-          getPermissionToFork: jest.fn().mockResolvedValue(true),
+          getPermissionToFork: jest.fn().mockResolvedValue(),
         });
 
         expect(giteaImplementation.repo).toBe('contributor/repo');
