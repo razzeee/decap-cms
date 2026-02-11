@@ -262,7 +262,7 @@ export default class Gitea implements Implementation {
 
   restoreUser(user: User) {
     return this.openAuthoringEnabled
-      ? this.authenticateWithFork({ userData: user, getPermissionToFork: () => true }).then(() =>
+      ? this.authenticateWithFork({ userData: user, getPermissionToFork: () => {} }).then(() =>
           this.authenticate(user),
         )
       : this.authenticate(user);
