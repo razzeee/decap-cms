@@ -234,8 +234,9 @@ export default class Gitea implements Implementation {
     this.repo = `${currentUser.login}/${repoName}`;
     this.useOpenAuthoring = true;
 
-    // Initialize API for fork operations if not already set (allows for testing with mocks)
-    if (!this.api) {
+    // Initialize or update API for fork operations
+    // Always recreate to ensure token and repo are up to date (unless a mock was injected for testing)
+    if (!this.options.API) {
       const apiCtor = API;
       this.api = new apiCtor({
         token,
