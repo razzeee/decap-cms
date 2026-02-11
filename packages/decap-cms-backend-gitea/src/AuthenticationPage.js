@@ -57,7 +57,15 @@ export default class GiteaAuthenticationPage extends React.Component {
       } else if (data) {
         const { open_authoring: openAuthoring = false } = this.props.config.backend;
         if (openAuthoring) {
-          return this.loginWithOpenAuthoring(data).then(() => this.props.onLogin(data));
+          return this.loginWithOpenAuthoring(data)
+            .then(() => this.props.onLogin(data))
+            .catch(error => {
+              this.setState({
+                loginError: error && error.toString ? error.toString() : String(error),
+                findingFork: false,
+                requestingFork: false,
+              });
+            });
         }
         this.props.onLogin(data);
       }
@@ -102,7 +110,15 @@ export default class GiteaAuthenticationPage extends React.Component {
         return;
       }
       if (openAuthoring) {
-        return this.loginWithOpenAuthoring(data).then(() => this.props.onLogin(data));
+        return this.loginWithOpenAuthoring(data)
+          .then(() => this.props.onLogin(data))
+          .catch(error => {
+            this.setState({
+              loginError: error && error.toString ? error.toString() : String(error),
+              findingFork: false,
+              requestingFork: false,
+            });
+          });
       }
       this.props.onLogin(data);
     });
@@ -154,7 +170,9 @@ export default class GiteaAuthenticationPage extends React.Component {
     return (
       <AuthenticationPage
         onLogin={this.handleLogin}
-        loginDisabled={this.props.inProgress || this.state.findingFork}
+        loginDisabled={
+          this.props.inProgress || this.state.findingFork || this.state.requestingFork
+        }
         loginErrorMessage={this.state.loginError}
         logoUrl={config.logo_url} // Deprecated, replaced by `logo.src`
         logo={config.logo}

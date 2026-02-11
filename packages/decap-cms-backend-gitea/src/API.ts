@@ -465,7 +465,9 @@ export default class API {
   }
 
   async getFileSha(path: string, { repoURL = this.repoURL, branch = this.branch } = {}) {
-    const encodedPath = path
+    // Normalize path by removing leading slash if present
+    const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+    const encodedPath = normalizedPath
       .split('/')
       .map(segment => encodeURIComponent(segment))
       .join('/');
@@ -496,7 +498,7 @@ export default class API {
         } as ChangeFileOperation;
       }),
     );
-    this.changeFiles(operations, { commitMessage: message });
+    return this.changeFiles(operations, { commitMessage: message });
   }
 
   toBase64(str: string) {
