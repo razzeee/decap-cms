@@ -152,7 +152,7 @@ export type GiteaRepository = {
   open_pr_counter: number;
   original_url: string;
   owner: GiteaUser;
-  parent?: GiteaRepository | null;
+  parent?: { full_name: string } | null;
   permissions: GiteaRepositoryPermissions;
   private: boolean;
   release_counter: number;
@@ -262,11 +262,11 @@ export type FilesResponse = {
 // Editorial Workflow Types
 
 export type GiteaLabel = {
-  id: number;
+  id?: number;
   name: string;
-  color: string;
-  description: string;
-  url: string;
+  color?: string;
+  description?: string;
+  url?: string;
 };
 
 export type GiteaBranch = {
