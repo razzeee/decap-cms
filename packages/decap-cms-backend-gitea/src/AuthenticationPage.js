@@ -82,7 +82,7 @@ export default class GiteaAuthenticationPage extends React.Component {
         },
         refuseFork: () => {
           this.setState({ requestingFork: false });
-          reject();
+          reject(new Error('User declined to create a fork'));
         },
       });
     });
