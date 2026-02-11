@@ -721,7 +721,8 @@ export default class API {
 
     // Get current labels and filter out old CMS labels and labels without ids
     const currentLabels = pullRequest.labels
-      .filter(l => !isCMSLabel(l.name, this.cmsLabelPrefix) && typeof l.id === 'number')
+      .filter(l => !isCMSLabel(l.name, this.cmsLabelPrefix))
+      .filter(l => typeof l.id === 'number')
       .map(l => l.id as number);
 
     // Add the new status label
