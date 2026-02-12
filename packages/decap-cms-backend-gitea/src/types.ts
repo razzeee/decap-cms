@@ -295,16 +295,10 @@ export type GiteaPullRequestBase = {
   repo?: GiteaRepository;
 };
 
-// Minimal type for open authoring mock PRs (branch-only drafts without real PRs)
-// This type is structurally compatible with GiteaPullRequest and represents
-// the minimal fields needed for a branch-only draft entry
-export type OpenAuthoringPullRequest = {
-  number: number; // MOCK_PULL_REQUEST (-1)
-  state: "open" | "closed";
-  labels: GiteaLabel[];
-  head: GiteaPullRequestHead;
-};
-
+// GiteaPullRequest represents a pull request from the Gitea API.
+// Many fields are optional to accommodate:
+// 1. Mock PRs used for open authoring branch-only drafts (MOCK_PULL_REQUEST)
+// 2. Partial API responses that may not include all fields
 export type GiteaPullRequest = {
   id?: number;
   number: number;
