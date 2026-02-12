@@ -442,8 +442,9 @@ export default class API {
         try {
           sha = await this.getFileSha(file.path, { branch });
           operation = FileOperation.UPDATE;
-          from_path = file.newPath && path;
-          path = file.newPath ? trimStart(file.newPath, '/') : path;
+          const newPath = 'newPath' in file ? (file as DataFile).newPath : undefined;
+          from_path = newPath && path;
+          path = newPath ? trimStart(newPath, '/') : path;
         } catch {
           sha = undefined;
           operation = FileOperation.CREATE;
@@ -574,9 +575,7 @@ export default class API {
     }
 
     // Filter out CMS labels for open authoring
-    const nonCmsLabels = pullRequest.labels.filter(
-      l => !isCMSLabel(l.name, this.cmsLabelPrefix),
-    );
+    const nonCmsLabels = pullRequest.labels.filter(l => !isCMSLabel(l.name, this.cmsLabelPrefix));
 
     // Add synthetic CMS label based on PR state
     const cmsLabel =
@@ -732,9 +731,7 @@ export default class API {
   }
 
   async getOpenAuthoringBranches(): Promise<GiteaBranch[]> {
-    const branches: GiteaBranch[] = await this.requestAllPages(
-      `${this.repoURL}/branches`,
-    );
+    const branches: GiteaBranch[] = await this.requestAllPages(`${this.repoURL}/branches`);
     const prefix = `${CMS_BRANCH_PREFIX}/${this.repo}/`;
     return branches.filter(b => b.name.startsWith(prefix));
   }
@@ -743,11 +740,7 @@ export default class API {
     try {
       const pullRequest = await this.getBranchPullRequest(branch);
       const { state: currentState, merged_at: mergedAt } = pullRequest as GiteaPullRequest;
-      if (
-        pullRequest.number !== MOCK_PULL_REQUEST &&
-        currentState === 'closed' &&
-        mergedAt
-      ) {
+      if (pullRequest.number !== MOCK_PULL_REQUEST && currentState === 'closed' && mergedAt) {
         // PR was merged, delete the branch
         await this.deleteBranch(branch);
         return { branch, filter: false };
@@ -836,8 +829,7 @@ export default class API {
         branchData?.commit?.author?.date ||
         branchData?.commit?.committer?.date ||
         new Date().toISOString(),
-      pullRequestAuthor:
-        pullRequest?.user?.login || branchData?.commit?.author?.name || 'Unknown',
+      pullRequestAuthor: pullRequest?.user?.login || branchData?.commit?.author?.name || 'Unknown',
     };
   }
 

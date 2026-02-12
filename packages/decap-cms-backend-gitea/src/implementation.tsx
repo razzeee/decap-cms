@@ -1,3 +1,4 @@
+import React from 'react';
 import { stripIndent } from 'common-tags';
 import trimStart from 'lodash/trimStart';
 import semaphore from 'semaphore';
@@ -267,19 +268,22 @@ export default class Gitea implements Implementation {
 
   restoreUser(user: User) {
     return this.openAuthoringEnabled
-      ? this.authenticateWithFork({ userData: user, getPermissionToFork: () => {} }).then(() =>
-          this.authenticate(user),
-        )
+      ? this.authenticateWithFork({
+          userData: user,
+          // no-op: restoreUser doesn't need fork approval UX
+          // eslint-disable-next-line @typescript-eslint/no-empty-function
+          getPermissionToFork: () => {},
+        }).then(() => this.authenticate(user))
       : this.authenticate(user);
   }
 
   async authenticate(state: Credentials) {
     this.token = state.token as string;
-    
+
     // Clear cached user data when token changes to prevent stale data across logins
     this._currentUserPromise = undefined;
     this._userIsOriginMaintainerPromises = {};
-    
+
     const apiCtor = API;
     this.api = new apiCtor({
       token: this.token,
@@ -322,11 +326,11 @@ export default class Gitea implements Implementation {
 
   logout() {
     this.token = null;
-    
+
     // Clear cached user data on logout
     this._currentUserPromise = undefined;
     this._userIsOriginMaintainerPromises = {};
-    
+
     if (this.api && this.api.reset && typeof this.api.reset === 'function') {
       return this.api.reset();
     }
@@ -507,8 +511,8 @@ export default class Gitea implements Implementation {
     }
   }
 
-  deleteFiles(paths: string[], commitMessage: string) {
-    return this.api!.deleteFiles(paths, commitMessage);
+  async deleteFiles(paths: string[], commitMessage: string): Promise<void> {
+    await this.api!.deleteFiles(paths, commitMessage);
   }
 
   async traverseCursor(cursor: Cursor, action: string) {
@@ -640,4 +644,3 @@ export default class Gitea implements Implementation {
     return {} as any;
   }
 }
-
