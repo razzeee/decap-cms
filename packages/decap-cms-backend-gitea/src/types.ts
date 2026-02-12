@@ -282,33 +282,37 @@ export type GiteaBranch = {
 };
 
 export type GiteaPullRequestHead = {
-  label: string;
+  label?: string;
   ref: string;
   sha: string;
-  repo: GiteaRepository;
+  repo?: GiteaRepository;
 };
 
 export type GiteaPullRequestBase = {
-  label: string;
-  ref: string;
-  sha: string;
-  repo: GiteaRepository;
+  label?: string;
+  ref?: string;
+  sha?: string;
+  repo?: GiteaRepository;
 };
 
+// GiteaPullRequest represents a pull request from the Gitea API.
+// Many fields are optional to accommodate:
+// 1. Mock PRs used for open authoring branch-only drafts (MOCK_PULL_REQUEST)
+// 2. Partial API responses that may not include all fields
 export type GiteaPullRequest = {
-  id: number;
+  id?: number;
   number: number;
   state: "open" | "closed";
-  title: string;
-  body: string;
-  user: GiteaUser;
+  title?: string;
+  body?: string;
+  user?: GiteaUser;
   labels: GiteaLabel[];
   head: GiteaPullRequestHead;
-  base: GiteaPullRequestBase;
-  merged: boolean;
-  merged_at: string | null;
-  updated_at: string;
-  created_at: string;
+  base?: GiteaPullRequestBase;
+  merged?: boolean;
+  merged_at?: string | null;
+  updated_at?: string;
+  created_at?: string;
 };
 
 export type GiteaChangedFile = {

@@ -128,9 +128,6 @@ export default class API {
 
   _userPromise?: Promise<GiteaUser>;
   _metadataSemaphore?: Semaphore;
-  _userIsOriginMaintainerPromises?: {
-    [key: string]: Promise<boolean>;
-  };
 
   commitAuthor?: {};
 
@@ -562,15 +559,16 @@ export default class API {
     const pullRequest = pullRequests.filter(pr => pr.head.sha === data.commit.id)[0];
     if (!pullRequest) {
       // if no pull request is found for the branch we return a mocked one
+      const mockPR: GiteaPullRequest = {
+        number: MOCK_PULL_REQUEST,
+        state: 'open',
+        labels: [
+          { name: statusToLabel(this.initialWorkflowStatus, this.cmsLabelPrefix) } as GiteaLabel,
+        ],
+        head: { ref: branch, sha: data.commit.id },
+      };
       return {
-        pullRequest: {
-          number: MOCK_PULL_REQUEST,
-          state: 'open',
-          labels: [
-            { name: statusToLabel(this.initialWorkflowStatus, this.cmsLabelPrefix) } as GiteaLabel,
-          ],
-          head: { ref: branch, sha: data.commit.id },
-        } as unknown as GiteaPullRequest,
+        pullRequest: mockPR,
         branch: data,
       };
     }
