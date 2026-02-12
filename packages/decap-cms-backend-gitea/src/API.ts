@@ -895,7 +895,16 @@ export default class API {
         await this.closePR(pullRequest.number);
       }
     } catch (e) {
-      // PR might not exist, continue to delete branch
+      // Only ignore expected errors (e.g. no PR / not under editorial workflow).
+      if (
+        e instanceof EditorialWorkflowError ||
+        (e instanceof APIError && e.status === 404)
+      ) {
+        // PR might not exist or entry is not under editorial workflow; continue to delete branch.
+      } else {
+        // Unexpected error: rethrow so we don't delete the branch in an unknown state.
+        throw e;
+      }
     }
 
     await this.deleteBranch(branch);
@@ -927,7 +936,10 @@ export default class API {
       await this.getBranch(branch);
       branchExists = true;
     } catch (e) {
-      // Branch doesn't exist
+      // Only treat a 404 "not found" as the branch not existing; rethrow other errors.
+      if (!(e instanceof APIError && e.status === 404)) {
+        throw e;
+      }
     }
 
     if (!branchExists) {
