@@ -5,44 +5,44 @@ import result from 'lodash/result';
 import partial from 'lodash/partial';
 import {
   APIError,
-  EditorialWorkflowError,
   basename,
+  branchFromContentKey,
+  CMS_BRANCH_PREFIX,
+  DEFAULT_PR_BODY,
+  EditorialWorkflowError,
   generateContentKey,
   getAllResponses,
+  isCMSLabel,
+  labelToStatus,
   localForage,
+  MERGE_COMMIT_MESSAGE,
   parseContentKey,
   readFileMetadata,
   requestWithBackoff,
-  unsentRequest,
-  CMS_BRANCH_PREFIX,
-  branchFromContentKey,
-  isCMSLabel,
-  labelToStatus,
   statusToLabel,
-  DEFAULT_PR_BODY,
-  MERGE_COMMIT_MESSAGE,
+  unsentRequest,
 } from 'decap-cms-lib-util';
 
 import type {
-  DataFile,
-  PersistOptions,
-  AssetProxy,
   ApiRequest,
+  AssetProxy,
+  DataFile,
   FetchError,
+  PersistOptions,
 } from 'decap-cms-lib-util';
 import type { Semaphore } from 'semaphore';
 import type {
   FilesResponse,
-  GitGetBlobResponse,
-  GitGetTreeResponse,
-  GiteaUser,
-  GiteaRepository,
-  ReposListCommitsResponse,
-  GiteaPullRequest,
   GiteaBranch,
-  GiteaLabel,
   GiteaChangedFile,
   GiteaCompareResponse,
+  GiteaLabel,
+  GiteaPullRequest,
+  GiteaRepository,
+  GiteaUser,
+  GitGetBlobResponse,
+  GitGetTreeResponse,
+  ReposListCommitsResponse,
 } from './types';
 
 export const API_NAME = 'Gitea';
@@ -326,7 +326,11 @@ export default class API {
     if (!sha) {
       sha = await this.getFileSha(path, { repoURL, branch });
     }
-    const content = await this.fetchBlobContent({ sha: sha as string, repoURL, parseText });
+    const content = await this.fetchBlobContent({
+      sha: sha as string,
+      repoURL,
+      parseText,
+    });
     return content;
   }
 
@@ -577,7 +581,9 @@ export default class API {
         number: MOCK_PULL_REQUEST,
         state: 'open',
         labels: [
-          { name: statusToLabel(this.initialWorkflowStatus, this.cmsLabelPrefix) } as GiteaLabel,
+          {
+            name: statusToLabel(this.initialWorkflowStatus, this.cmsLabelPrefix),
+          } as GiteaLabel,
         ],
         head: { ref: branch, sha: data.commit.id },
       };
@@ -1005,9 +1011,18 @@ export default class API {
         }),
       });
     } catch (error) {
-      // If sync fails (e.g., conflicts or permissions),
-      // continue without syncing - user will need to sync manually
-      console.warn('Failed to sync fork with upstream:', error);
+      // If merge-upstream fails, try the sync_fork endpoint as fallback
+      // It doesn't seem to exist on codeberg right now
+      try {
+        await this.request(`${this.repoURL}/sync_fork`, {
+          method: 'POST',
+        });
+      } catch (fallbackError) {
+        // If both sync methods fail (e.g., conflicts or permissions),
+        // continue without syncing - user will need to sync manually
+        console.warn('Failed to sync fork with upstream:', error);
+        console.warn('Fallback sync_fork also failed:', fallbackError);
+      }
     }
   }
 }
