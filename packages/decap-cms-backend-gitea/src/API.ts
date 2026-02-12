@@ -294,7 +294,22 @@ export default class API {
     if (!this.useOpenAuthoring) {
       return parseContentKey(contentKey);
     }
-    return parseContentKey(contentKey.slice(this.repo.length + 1));
+
+    const repoPrefix = `${this.repo}/`;
+    // Some content keys may be prefixed with the origin repo instead of the fork repo.
+    const originRepoPrefix =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this as any).originRepo ? `${(this as any).originRepo}/` : null;
+
+    let keyToParse = contentKey;
+
+    if (contentKey.startsWith(repoPrefix)) {
+      keyToParse = contentKey.slice(repoPrefix.length);
+    } else if (originRepoPrefix && contentKey.startsWith(originRepoPrefix)) {
+      keyToParse = contentKey.slice(originRepoPrefix.length);
+    }
+
+    return parseContentKey(keyToParse);
   }
 
   async readFile(

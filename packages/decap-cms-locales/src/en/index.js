@@ -14,6 +14,12 @@ const en = {
       identitySettings:
         'Unable to access identity settings. When using git-gateway backend make sure to enable Identity service and Git Gateway.',
     },
+    openAuthoring: {
+      forkMessage:
+        "Open Authoring is enabled: we need to use a fork on your %{provider} account. (If a fork already exists, we'll use that.)",
+      forkRepo: 'Fork the repo',
+      doNotForkRepo: "Don't fork the repo",
+    },
   },
   app: {
     header: {

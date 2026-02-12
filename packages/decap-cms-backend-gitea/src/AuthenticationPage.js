@@ -91,6 +91,10 @@ export default class GiteaAuthenticationPage extends React.Component {
   loginWithOpenAuthoring(data) {
     const { backend } = this.props;
 
+    if (!backend) {
+      throw new Error('Backend prop is required for open authoring login flow');
+    }
+
     this.setState({ findingFork: true });
     return backend
       .authenticateWithFork({ userData: data, getPermissionToFork: this.getPermissionToFork })
@@ -145,20 +149,20 @@ export default class GiteaAuthenticationPage extends React.Component {
 
   getAuthenticationPageRenderArgs() {
     const { requestingFork } = this.state;
+    const { t } = this.props;
 
     if (requestingFork) {
       const { approveFork, refuseFork } = this.state;
       return {
         renderPageContent: ({ LoginButton, TextButton, showAbortButton }) => (
           <ForkApprovalContainer>
-            <p>
-              Open Authoring is enabled: we need to use a fork on your Gitea account. (If a fork
-              already exists, we'll use that.)
-            </p>
+            <p>{t('auth.openAuthoring.forkMessage', { provider: 'Gitea' })}</p>
             <ForkButtonsContainer>
-              <LoginButton onClick={approveFork}>Fork the repo</LoginButton>
+              <LoginButton onClick={approveFork}>{t('auth.openAuthoring.forkRepo')}</LoginButton>
               {showAbortButton && (
-                <TextButton onClick={refuseFork}>Don't fork the repo</TextButton>
+                <TextButton onClick={refuseFork}>
+                  {t('auth.openAuthoring.doNotForkRepo')}
+                </TextButton>
               )}
             </ForkButtonsContainer>
           </ForkApprovalContainer>
@@ -177,9 +181,7 @@ export default class GiteaAuthenticationPage extends React.Component {
     return (
       <AuthenticationPage
         onLogin={this.handleLogin}
-        loginDisabled={
-          this.props.inProgress || this.state.findingFork || this.state.requestingFork
-        }
+        loginDisabled={this.props.inProgress || this.state.findingFork || this.state.requestingFork}
         loginErrorMessage={this.state.loginError}
         logoUrl={config.logo_url} // Deprecated, replaced by `logo.src`
         logo={config.logo}
