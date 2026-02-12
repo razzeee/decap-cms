@@ -297,9 +297,7 @@ export default class API {
 
     const repoPrefix = `${this.repo}/`;
     // Some content keys may be prefixed with the origin repo instead of the fork repo.
-    const originRepoPrefix =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (this as any).originRepo ? `${(this as any).originRepo}/` : null;
+    const originRepoPrefix = this.originRepo ? `${this.originRepo}/` : null;
 
     let keyToParse = contentKey;
 
