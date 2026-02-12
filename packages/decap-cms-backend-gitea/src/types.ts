@@ -282,33 +282,44 @@ export type GiteaBranch = {
 };
 
 export type GiteaPullRequestHead = {
-  label: string;
+  label?: string;
   ref: string;
   sha: string;
-  repo: GiteaRepository;
+  repo?: GiteaRepository;
 };
 
 export type GiteaPullRequestBase = {
-  label: string;
-  ref: string;
-  sha: string;
-  repo: GiteaRepository;
+  label?: string;
+  ref?: string;
+  sha?: string;
+  repo?: GiteaRepository;
+};
+
+// Minimal type for open authoring mock PRs (branch-only drafts without real PRs)
+export type OpenAuthoringPullRequest = {
+  number: number; // MOCK_PULL_REQUEST (-1)
+  state: "open" | "closed";
+  labels: GiteaLabel[];
+  head: {
+    ref: string;
+    sha: string;
+  };
 };
 
 export type GiteaPullRequest = {
-  id: number;
+  id?: number;
   number: number;
   state: "open" | "closed";
-  title: string;
-  body: string;
-  user: GiteaUser;
+  title?: string;
+  body?: string;
+  user?: GiteaUser;
   labels: GiteaLabel[];
   head: GiteaPullRequestHead;
-  base: GiteaPullRequestBase;
-  merged: boolean;
-  merged_at: string | null;
-  updated_at: string;
-  created_at: string;
+  base?: GiteaPullRequestBase;
+  merged?: boolean;
+  merged_at?: string | null;
+  updated_at?: string;
+  created_at?: string;
 };
 
 export type GiteaChangedFile = {
