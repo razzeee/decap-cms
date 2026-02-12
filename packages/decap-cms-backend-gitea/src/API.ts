@@ -713,10 +713,17 @@ export default class API {
     // Get or create the new status label
     const label = await this.getOrCreateLabel(newLabel);
 
-    // Get current labels and filter out old CMS labels
+    if (typeof label.id !== 'number') {
+      throw new Error(
+        `Status label "${label.name}" returned from getOrCreateLabel is missing a numeric id`,
+      );
+    }
+
+    // Get current labels and filter out old CMS labels and labels without ids
     const currentLabels = pullRequest.labels
       .filter(l => !isCMSLabel(l.name, this.cmsLabelPrefix))
-      .map(l => l.id);
+      .filter(l => typeof l.id === 'number')
+      .map(l => l.id as number);
 
     // Add the new status label
     await this.updatePullRequestLabels(pullRequest.number, [...currentLabels, label.id]);
