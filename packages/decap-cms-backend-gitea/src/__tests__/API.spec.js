@@ -407,7 +407,10 @@ describe('gitea API', () => {
 
       await expect(
         api.deleteFiles(['content/posts/post.md'], 'delete post'),
-      ).rejects.toEqual('Cannot delete published entries as an Open Authoring user!');
+      ).rejects.toMatchObject({
+        message: 'Cannot delete published entries as an Open Authoring user!',
+        status: 403,
+      });
     });
   });
 

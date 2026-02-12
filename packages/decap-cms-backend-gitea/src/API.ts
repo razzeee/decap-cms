@@ -484,7 +484,11 @@ export default class API {
 
   async deleteFiles(paths: string[], message: string) {
     if (this.useOpenAuthoring) {
-      return Promise.reject('Cannot delete published entries as an Open Authoring user!');
+      throw new APIError(
+        'Cannot delete published entries as an Open Authoring user!',
+        403,
+        API_NAME,
+      );
     }
 
     const operations: ChangeFileOperation[] = await Promise.all(
