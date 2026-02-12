@@ -219,6 +219,10 @@ export default class Gitea implements Implementation {
     }
     const token = userData.token as string;
 
+    // Clear cached user data when token changes to prevent stale data across logins
+    this._currentUserPromise = undefined;
+    this._userIsOriginMaintainerPromises = {};
+
     // Origin maintainers should be able to use the CMS normally. If alwaysFork
     // is enabled we always fork (and avoid the origin maintainer check)
     if (!this.alwaysForkEnabled && (await this.userIsOriginMaintainer({ token }))) {
@@ -271,6 +275,11 @@ export default class Gitea implements Implementation {
 
   async authenticate(state: Credentials) {
     this.token = state.token as string;
+    
+    // Clear cached user data when token changes to prevent stale data across logins
+    this._currentUserPromise = undefined;
+    this._userIsOriginMaintainerPromises = {};
+    
     const apiCtor = API;
     this.api = new apiCtor({
       token: this.token,
@@ -313,6 +322,11 @@ export default class Gitea implements Implementation {
 
   logout() {
     this.token = null;
+    
+    // Clear cached user data on logout
+    this._currentUserPromise = undefined;
+    this._userIsOriginMaintainerPromises = {};
+    
     if (this.api && this.api.reset && typeof this.api.reset === 'function') {
       return this.api.reset();
     }
@@ -466,8 +480,7 @@ export default class Gitea implements Implementation {
         if (options.useWorkflow) {
           const slug = entry.dataFiles[0].slug;
           const collection = options.collectionName as string;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const files: any[] = [...entry.dataFiles, ...entry.assets];
+          const files = [...entry.dataFiles, ...entry.assets];
           return this.api!.editorialWorkflowGit(files, slug, collection, options);
         }
         return this.api!.persistFiles(entry.dataFiles, entry.assets, options);
