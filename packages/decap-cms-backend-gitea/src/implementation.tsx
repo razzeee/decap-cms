@@ -589,7 +589,7 @@ export default class Gitea implements Implementation {
     const name = basename(path);
     const fileObj = blobToFileObj(name, blob);
     return {
-      id: path,
+      id,
       name,
       path,
       size: fileObj.size,
