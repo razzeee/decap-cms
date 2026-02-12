@@ -39,7 +39,6 @@ import type {
   GiteaRepository,
   ReposListCommitsResponse,
   GiteaPullRequest,
-  OpenAuthoringPullRequest,
   GiteaBranch,
   GiteaLabel,
   GiteaChangedFile,
@@ -560,7 +559,7 @@ export default class API {
     const pullRequest = pullRequests.filter(pr => pr.head.sha === data.commit.id)[0];
     if (!pullRequest) {
       // if no pull request is found for the branch we return a mocked one
-      const mockPR: OpenAuthoringPullRequest = {
+      const mockPR: GiteaPullRequest = {
         number: MOCK_PULL_REQUEST,
         state: 'open',
         labels: [
@@ -569,7 +568,7 @@ export default class API {
         head: { ref: branch, sha: data.commit.id },
       };
       return {
-        pullRequest: mockPR as GiteaPullRequest,
+        pullRequest: mockPR,
         branch: data,
       };
     }

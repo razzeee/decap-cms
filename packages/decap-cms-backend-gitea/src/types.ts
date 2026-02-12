@@ -296,14 +296,13 @@ export type GiteaPullRequestBase = {
 };
 
 // Minimal type for open authoring mock PRs (branch-only drafts without real PRs)
+// This type is structurally compatible with GiteaPullRequest and represents
+// the minimal fields needed for a branch-only draft entry
 export type OpenAuthoringPullRequest = {
   number: number; // MOCK_PULL_REQUEST (-1)
   state: "open" | "closed";
   labels: GiteaLabel[];
-  head: {
-    ref: string;
-    sha: string;
-  };
+  head: GiteaPullRequestHead;
 };
 
 export type GiteaPullRequest = {
