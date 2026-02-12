@@ -384,13 +384,13 @@ describe('gitea backend implementation', () => {
         const mockForkExists = jest.fn().mockResolvedValue(false);
         const mockCreateFork = jest.fn().mockResolvedValue({ full_name: 'contributor/repo' });
         const mockMergeUpstream = jest.fn();
-        
+
         const giteaImplementation = new GiteaImplementation(
           {
             ...config,
             backend: { ...config.backend, open_authoring: true },
           },
-          { 
+          {
             useWorkflow: true,
             API: {
               forkExists: mockForkExists,

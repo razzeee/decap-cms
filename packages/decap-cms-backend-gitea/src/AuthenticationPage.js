@@ -95,9 +95,16 @@ export default class GiteaAuthenticationPage extends React.Component {
     return backend
       .authenticateWithFork({ userData: data, getPermissionToFork: this.getPermissionToFork })
       .catch(err => {
-        this.setState({ findingFork: false });
         console.error(err);
         throw err;
+      })
+      .finally(() => {
+        this.setState({
+          findingFork: false,
+          requestingFork: false,
+          approveFork: undefined,
+          refuseFork: undefined,
+        });
       });
   }
 
