@@ -92,7 +92,8 @@ export default class GiteaAuthenticationPage extends React.Component {
     const { backend } = this.props;
 
     if (!backend) {
-      throw new Error('Backend prop is required for open authoring login flow');
+      const error = new Error('Backend prop is required for open authoring login flow');
+      return Promise.reject(error);
     }
 
     this.setState({ findingFork: true });

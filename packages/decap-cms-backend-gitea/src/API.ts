@@ -761,7 +761,15 @@ export default class API {
         return { branch, filter: true };
       }
     } catch (e) {
-      return { branch, filter: false };
+      // Only filter out branches for expected "not found / not under workflow" errors.
+      // For other errors (e.g. transient network/API issues), keep the branch.
+      if (e instanceof APIError && e.status === 404) {
+        return { branch, filter: false };
+      }
+      if (e instanceof EditorialWorkflowError) {
+        return { branch, filter: false };
+      }
+      return { branch, filter: true };
     }
   };
 

@@ -1,4 +1,5 @@
 import { Base64 } from 'js-base64';
+import { APIError, EditorialWorkflowError } from 'decap-cms-lib-util';
 
 import API, { MOCK_PULL_REQUEST } from '../API';
 
@@ -1304,6 +1305,57 @@ describe('gitea API', () => {
 
       const mockPR = { number: MOCK_PULL_REQUEST, state: 'open', merged_at: null, labels: [] };
       api.getBranchPullRequest = jest.fn().mockResolvedValue(mockPR);
+
+      const result = await api.filterOpenAuthoringBranches('cms/contributor/repo/posts/entry');
+
+      expect(result).toEqual({ branch: 'cms/contributor/repo/posts/entry', filter: true });
+    });
+
+    it('should filter out branches on 404 errors', async () => {
+      const api = new API({
+        branch: 'master',
+        repo: 'contributor/repo',
+        originRepo: 'owner/repo',
+        useOpenAuthoring: true,
+      });
+
+      const notFoundError = new APIError('Not found', 404, 'Gitea');
+      api.getBranchPullRequest = jest.fn().mockRejectedValue(notFoundError);
+
+      const result = await api.filterOpenAuthoringBranches('cms/contributor/repo/posts/entry');
+
+      expect(result).toEqual({ branch: 'cms/contributor/repo/posts/entry', filter: false });
+    });
+
+    it('should filter out branches on EditorialWorkflowError', async () => {
+      const api = new API({
+        branch: 'master',
+        repo: 'contributor/repo',
+        originRepo: 'owner/repo',
+        useOpenAuthoring: true,
+      });
+
+      const workflowError = new EditorialWorkflowError(
+        'content is not under editorial workflow',
+        true,
+      );
+      api.getBranchPullRequest = jest.fn().mockRejectedValue(workflowError);
+
+      const result = await api.filterOpenAuthoringBranches('cms/contributor/repo/posts/entry');
+
+      expect(result).toEqual({ branch: 'cms/contributor/repo/posts/entry', filter: false });
+    });
+
+    it('should keep branches on transient network errors', async () => {
+      const api = new API({
+        branch: 'master',
+        repo: 'contributor/repo',
+        originRepo: 'owner/repo',
+        useOpenAuthoring: true,
+      });
+
+      const networkError = new APIError('Network error', 500, 'Gitea');
+      api.getBranchPullRequest = jest.fn().mockRejectedValue(networkError);
 
       const result = await api.filterOpenAuthoringBranches('cms/contributor/repo/posts/entry');
 
