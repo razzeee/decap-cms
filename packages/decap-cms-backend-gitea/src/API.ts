@@ -430,7 +430,7 @@ export default class API {
     })) as FilesResponse;
   }
 
-  async getChangeFileOperations(files: { path: string; newPath?: string }[], branch: string) {
+  async getChangeFileOperations(files: (DataFile | AssetProxy)[], branch: string) {
     const items: ChangeFileOperation[] = await Promise.all(
       files.map(async file => {
         const content = await result(
@@ -903,7 +903,7 @@ export default class API {
   }
 
   async editorialWorkflowGit(
-    files: { path: string; newPath?: string }[],
+    files: (DataFile | AssetProxy)[],
     slug: string,
     collection: string,
     options: PersistOptions,
